@@ -3,6 +3,11 @@ import "./index.css";
 
 type Screen = "login" | "classroom" | "game" | "minigame" | "victory";
 
+const DAILY_KEY = "finanzas_mision_fecha";
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const isMissionDoneToday = () => localStorage.getItem(DAILY_KEY) === todayStr();
+const markMissionDone = () => localStorage.setItem(DAILY_KEY, todayStr());
+
 interface RoomObject {
   id: number;
   emoji: string;
@@ -375,7 +380,12 @@ function GameScreen({
     message: null,
     balanceAnimating: false,
   });
-  const [missionDone, setMissionDone] = useState(false);
+  const [missionDone, setMissionDone] = useState(() => isMissionDoneToday());
+
+  const lockMission = useCallback(() => {
+    markMissionDone();
+    setMissionDone(true);
+  }, []);
 
   const triggerFlojonazo = useCallback(() => {
     setState((prev) => ({
@@ -393,10 +403,11 @@ function GameScreen({
     }));
     setTimeout(() => setState((prev) => ({ ...prev, balanceAnimating: false })), 600);
     setTimeout(() => setState((prev) => ({ ...prev, message: null })), 5000);
-  }, []);
+    lockMission();
+  }, [lockMission]);
 
   const applyMissionReward = useCallback(() => {
-    setMissionDone(true);
+    lockMission();
     setState((prev) => ({
       ...prev,
       balance: prev.balance + 2.0,
@@ -473,36 +484,50 @@ function GameScreen({
           </div>
         )}
 
-        {/* Action buttons */}
+        {/* Action buttons / locked state */}
         <div className="glass-card rounded-3xl p-6 animate-fade-in-up space-y-4" style={{ animationDelay: "0.2s" }}>
           <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest text-center">Elige tu acción</h3>
 
-          <button
-            className="btn-success w-full py-4 px-5 rounded-2xl font-bold text-base cursor-pointer text-left flex items-start gap-3"
-            onClick={onStartMinigame}
-          >
-            <span className="text-2xl">💪</span>
-            <span className="flex-1">
-              <span className="block">Misión Manual</span>
-              <span className="block text-green-100 text-xs font-medium mt-0.5">
-                Consumo Responsable · ¡Limpia y gana S/. 2.00!
-              </span>
-            </span>
-            <span className="text-green-200 text-sm self-center">▶</span>
-          </button>
+          {missionDone ? (
+            <div className="rounded-2xl p-5 text-center" style={{ background: "#f3f4f6", border: "2px dashed #d1d5db" }}>
+              <div className="text-3xl mb-2">⏳</div>
+              <p className="font-bold text-gray-500 text-sm leading-relaxed">
+                Ya realizaste tu misión por hoy.
+              </p>
+              <p className="text-gray-400 text-xs mt-1">
+                Regresa mañana para seguir acumulando soles.
+              </p>
+            </div>
+          ) : (
+            <>
+              <button
+                className="btn-success w-full py-4 px-5 rounded-2xl font-bold text-base cursor-pointer text-left flex items-start gap-3"
+                onClick={onStartMinigame}
+              >
+                <span className="text-2xl">💪</span>
+                <span className="flex-1">
+                  <span className="block">Misión Manual</span>
+                  <span className="block text-green-100 text-xs font-medium mt-0.5">
+                    Consumo Responsable · ¡Limpia y gana S/. 2.00!
+                  </span>
+                </span>
+                <span className="text-green-200 text-sm self-center">▶</span>
+              </button>
 
-          <button
-            className="btn-warning w-full py-4 px-5 rounded-2xl font-bold text-base cursor-pointer text-left flex items-start gap-3"
-            onClick={triggerFlojonazo}
-          >
-            <span className="text-2xl">😴</span>
-            <span className="flex-1">
-              <span className="block">Pagarle al NPC Flojonazo</span>
-              <span className="block text-yellow-100 text-xs font-medium mt-0.5">
-                Consumo Irresponsable · Solo recibes S/. 0.10
-              </span>
-            </span>
-          </button>
+              <button
+                className="btn-warning w-full py-4 px-5 rounded-2xl font-bold text-base cursor-pointer text-left flex items-start gap-3"
+                onClick={triggerFlojonazo}
+              >
+                <span className="text-2xl">😴</span>
+                <span className="flex-1">
+                  <span className="block">Pagarle al NPC Flojonazo</span>
+                  <span className="block text-yellow-100 text-xs font-medium mt-0.5">
+                    Consumo Irresponsable · Solo recibes S/. 0.10
+                  </span>
+                </span>
+              </button>
+            </>
+          )}
         </div>
 
         {/* History */}
