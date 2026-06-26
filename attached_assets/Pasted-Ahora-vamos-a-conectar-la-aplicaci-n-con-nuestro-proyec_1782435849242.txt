@@ -1,0 +1,22 @@
+Ahora vamos a conectar la aplicación con nuestro proyecto de Firebase real para manejar inicios de sesión verdaderos, bases de datos en la nube y control de rachas. 
+
+Por favor, actualiza todo el código con estas especificaciones técnicas:
+
+1. AUTENTICACIÓN REAL:
+- Al presionar "🔑 Iniciar Sesión con Google", usa el SDK de Firebase Auth con GoogleAuthProvider (signInWithPopup).
+- Al iniciar sesión correctamente, verifica en la colección de Firestore llamada "usuarios" si el ID del usuario (uid) ya existe.
+
+2. SALAS VERDADERAS EN LA NUBE:
+- Si el usuario NO existe en la base de datos, mándalo a la "Pantalla de Aula". Cuando ingrese su código de salón (ej: 3SEC-A) y presione "Unirse", crea su documento en Firestore dentro de la colección "usuarios" con: nombre, correo, aula, saldo inicial (0.00), racha (1) y la fecha de su última misión en formato YYYY-MM-DD.
+- Si el usuario YA existe en la base de datos, carga directamente su saldo, racha y aula desde Firestore a la "Pantalla Principal del Juego".
+
+3. CONTROL DE RACHAS Y LÍMITE DIARIO (EN LA NUBE):
+- Reemplaza el LocalStorage por una validación con la base de datos de Firestore usando la fecha actual.
+- Al cargar el panel de juego, compara la fecha de la "última misión guardada" con la fecha de hoy:
+  * Si la última misión fue AYER: Muestra los botones activos y aumenta la racha en +1 visualmente.
+  * Si la última misión fue HOY: Bloquea automáticamente los botones con el mensaje "⏳ Ya realizaste tu misión por hoy. Regresa mañana...".
+  * Si la última misión fue hace MÁS DE DOS DÍAS: Reinicia la racha a 1.
+- Cuando el usuario complete la misión de hoy (ya sea manual o por NPC), actualiza en Firestore tanto su nuevo saldo como la fecha de la última misión al día de hoy, y congela la racha.
+
+4. CÓDIGO DE INICIALIZACIÓN:
+Deja un bloque visible arriba en el código de JavaScript donde se inicialice Firebase (initializeApp) con las variables vacías de "firebaseConfig" (apiKey, authDomain, projectId, etc.) para que yo pueda pegar mis llaves secretas manualmente.
