@@ -141,15 +141,21 @@ async function fetchRanking(aula: string): Promise<RankEntry[]> {
 // ─── Firestore: cargar estadísticas del salón (para Profesor) ─────────────
 async function fetchClassroomStats(aula: string) {
   try {
-    const q = query(collection(db!, "usuarios"), where("aula", "==", aula));
+    // Usa el mismo índice compuesto: aula ASC + saldo DESC
+    const q = query(
+      collection(db!, "usuarios"),
+      where("aula", "==", aula),
+      orderBy("saldo", "desc")
+    );
     const snap = await getDocs(q);
+    // Los docs ya vienen ordenados por saldo desc gracias al índice
     const alumnos = snap.docs.map((d) => d.data() as UserDoc);
     const total = alumnos.length;
     const avgSaldo = total > 0 ? alumnos.reduce((s, a) => s + a.saldo, 0) / total : 0;
     const maxRacha = total > 0 ? Math.max(...alumnos.map((a) => a.racha)) : 0;
     const misionHoy = alumnos.filter((a) => a.ultimaMision === todayStr()).length;
-    const ranked = [...alumnos]
-      .sort((a, b) => b.saldo - a.saldo)
+    // Ya ordenados → tomar los primeros 10
+    const ranked = alumnos
       .slice(0, 10)
       .map((a) => ({ nombre: a.nombre, saldo: a.saldo, racha: a.racha }));
     return { total, avgSaldo, maxRacha, misionHoy, ranked };
@@ -1126,8 +1132,8 @@ export default function App() {
         correo: firebaseUser.email ?? "",
         aula: code,
         saldo: 0,
-        racha: 1,
-        ultimaMision: today,
+        racha: 0,
+        ultimaMision: null, // null → alumno nuevo puede jugar inmediatamente
       };
       await setDoc(doc(db!, "usuarios", firebaseUser.uid), {
         ...newDoc,
@@ -1135,7 +1141,7 @@ export default function App() {
       });
       setUserDoc(newDoc);
       setDisplayRacha(1);
-      setMissionDoneToday(true); // La fecha de hoy ya está puesta al crear
+      setMissionDoneToday(false);
       setScreen("game");
     } catch (e) {
       console.error("Error al guardar aula:", e);
@@ -1195,8 +1201,13 @@ export default function App() {
   // ── Cerrar sesión ────────────────────────────────────────────────────────
   const handleSignOut = async () => {
     try { await signOut(auth!); } catch { /* ignore */ }
+    // Resetear TODO el estado del usuario para que no se filtre al siguiente
     setUserDoc(null);
     setFirebaseUser(null);
+    setMissionDoneToday(false);
+    setDisplayRacha(1);
+    setVictoryData({ newBalance: 0, newRacha: 1 });
+    setAuthError(null);
     setScreen("login");
   };
 
