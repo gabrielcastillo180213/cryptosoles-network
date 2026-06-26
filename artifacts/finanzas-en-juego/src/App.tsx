@@ -10,12 +10,22 @@ import {
   getDoc,
   setDoc,
   updateDoc,
+  collection,
+  query,
+  where,
+  orderBy,
+  limit,
+  getDocs,
   serverTimestamp,
 } from "firebase/firestore";
-import { auth, googleProvider, db, FIREBASE_CONFIGURED } from "./firebase";
+import { auth, googleProvider, db } from "./firebase";
 import "./index.css";
 
-// ─── Helpers de fecha ──────────────────────────────────────────────────────
+// ─── Constantes ───────────────────────────────────────────────────────────
+const TEACHER_PASSWORD = "profedpcc";
+const VAGONETA_SECONDS = 30;
+
+// ─── Helpers de fecha ─────────────────────────────────────────────────────
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const yesterdayStr = () => {
   const d = new Date();
@@ -23,8 +33,17 @@ const yesterdayStr = () => {
   return d.toISOString().slice(0, 10);
 };
 
-// ─── Tipos ─────────────────────────────────────────────────────────────────
-type Screen = "loading" | "login" | "classroom" | "game" | "minigame" | "vagoneta" | "victory";
+// ─── Tipos ────────────────────────────────────────────────────────────────
+type Screen =
+  | "loading"
+  | "login"
+  | "teacher-login"
+  | "teacher"
+  | "classroom"
+  | "game"
+  | "minigame"
+  | "vagoneta"
+  | "victory";
 
 interface UserDoc {
   nombre: string;
@@ -33,6 +52,13 @@ interface UserDoc {
   saldo: number;
   racha: number;
   ultimaMision: string | null;
+}
+
+interface RankEntry {
+  nombre: string;
+  saldo: number;
+  racha: number;
+  uid?: string;
 }
 
 interface RoomObject {
@@ -45,48 +71,45 @@ interface RoomObject {
   scale: number;
 }
 
-// ─── Habitaciones ─────────────────────────────────────────────────────────
+// ─── Configuración de habitaciones ────────────────────────────────────────
 const ROOM_CONFIGS = [
   {
     name: "Tu Cuarto",
-    bg: "linear-gradient(160deg, #dbeafe 0%, #bfdbfe 40%, #93c5fd 100%)",
+    bg: "linear-gradient(160deg,#dbeafe 0%,#bfdbfe 40%,#93c5fd 100%)",
     floorColor: "#93c5fd",
     objects: ["📄", "👕", "🧸", "🧦", "📚", "🎮", "👟"],
     count: 7,
   },
   {
     name: "La Sala",
-    bg: "linear-gradient(160deg, #fef9c3 0%, #fde68a 40%, #fbbf24 100%)",
+    bg: "linear-gradient(160deg,#fef9c3 0%,#fde68a 40%,#fbbf24 100%)",
     floorColor: "#fbbf24",
     objects: ["🍕", "🥤", "📰", "🎒", "🧃", "🍿", "🧢"],
     count: 8,
   },
   {
     name: "La Cocina",
-    bg: "linear-gradient(160deg, #dcfce7 0%, #bbf7d0 40%, #86efac 100%)",
+    bg: "linear-gradient(160deg,#dcfce7 0%,#bbf7d0 40%,#86efac 100%)",
     floorColor: "#86efac",
     objects: ["🥄", "🍳", "🧻", "🫙", "🍱", "🥢", "🧹"],
     count: 9,
   },
 ];
 
-function generateObjects(config: (typeof ROOM_CONFIGS)[0], round: number): RoomObject[] {
+function generateObjects(cfg: (typeof ROOM_CONFIGS)[0], round: number): RoomObject[] {
   const objs: RoomObject[] = [];
   const used: { x: number; y: number }[] = [];
-  for (let i = 0; i < config.count + round; i++) {
-    let x = 0, y = 0, attempts = 0;
+  for (let i = 0; i < cfg.count + round; i++) {
+    let x = 0, y = 0, att = 0;
     do {
       x = 8 + Math.random() * 72;
       y = 20 + Math.random() * 55;
-      attempts++;
-    } while (
-      attempts < 30 &&
-      used.some((p) => Math.abs(p.x - x) < 10 && Math.abs(p.y - y) < 8)
-    );
+      att++;
+    } while (att < 30 && used.some((p) => Math.abs(p.x - x) < 10 && Math.abs(p.y - y) < 8));
     used.push({ x, y });
     objs.push({
       id: i,
-      emoji: config.objects[i % config.objects.length],
+      emoji: cfg.objects[i % cfg.objects.length],
       x, y,
       cleaned: false,
       rotation: Math.random() * 60 - 30,
@@ -96,6 +119,45 @@ function generateObjects(config: (typeof ROOM_CONFIGS)[0], round: number): RoomO
   return objs;
 }
 
+// ─── Firestore: cargar ranking ────────────────────────────────────────────
+async function fetchRanking(aula: string): Promise<RankEntry[]> {
+  try {
+    const q = query(
+      collection(db!, "usuarios"),
+      where("aula", "==", aula),
+      orderBy("saldo", "desc"),
+      limit(5)
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => {
+      const data = d.data() as UserDoc;
+      return { nombre: data.nombre, saldo: data.saldo, racha: data.racha, uid: d.id };
+    });
+  } catch {
+    return [];
+  }
+}
+
+// ─── Firestore: cargar estadísticas del salón (para Profesor) ─────────────
+async function fetchClassroomStats(aula: string) {
+  try {
+    const q = query(collection(db!, "usuarios"), where("aula", "==", aula));
+    const snap = await getDocs(q);
+    const alumnos = snap.docs.map((d) => d.data() as UserDoc);
+    const total = alumnos.length;
+    const avgSaldo = total > 0 ? alumnos.reduce((s, a) => s + a.saldo, 0) / total : 0;
+    const maxRacha = total > 0 ? Math.max(...alumnos.map((a) => a.racha)) : 0;
+    const misionHoy = alumnos.filter((a) => a.ultimaMision === todayStr()).length;
+    const ranked = [...alumnos]
+      .sort((a, b) => b.saldo - a.saldo)
+      .slice(0, 10)
+      .map((a) => ({ nombre: a.nombre, saldo: a.saldo, racha: a.racha }));
+    return { total, avgSaldo, maxRacha, misionHoy, ranked };
+  } catch {
+    return null;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PANTALLA: Cargando
 // ═══════════════════════════════════════════════════════════════════════════
@@ -103,8 +165,10 @@ function LoadingScreen({ message }: { message?: string }) {
   return (
     <div className="screen-bg flex items-center justify-center min-h-screen">
       <div className="text-center animate-fade-in-up">
-        <div className="text-5xl mb-4" style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⚙️</div>
-        <p className="text-gray-500 font-medium mt-3">{message ?? "Cargando..."}</p>
+        <div className="text-5xl mb-4" style={{ display: "inline-block", animation: "coinBounce 1s ease infinite" }}>
+          🏦
+        </div>
+        <p className="text-gray-500 font-semibold mt-2">{message ?? "Cargando..."}</p>
       </div>
     </div>
   );
@@ -115,10 +179,12 @@ function LoadingScreen({ message }: { message?: string }) {
 // ═══════════════════════════════════════════════════════════════════════════
 function LoginScreen({
   onLogin,
+  onTeacher,
   loading,
   error,
 }: {
   onLogin: () => void;
+  onTeacher: () => void;
   loading: boolean;
   error: string | null;
 }) {
@@ -137,7 +203,7 @@ function LoginScreen({
         <div className="my-6 border-t border-gray-100" />
 
         {error && (
-          <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm">
+          <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm animate-slide-down">
             ⚠️ {error}
           </div>
         )}
@@ -148,7 +214,7 @@ function LoginScreen({
           disabled={loading}
         >
           {loading ? (
-            <span>⚙️</span>
+            <span className="text-xl">⚙️</span>
           ) : (
             <svg width="22" height="22" viewBox="0 0 48 48" fill="none">
               <path d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z" fill="#FFC107"/>
@@ -157,10 +223,238 @@ function LoginScreen({
               <path d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 01-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z" fill="#1976D2"/>
             </svg>
           )}
-          {loading ? "Iniciando sesión..." : "🔑 Iniciar Sesión con Google"}
+          {loading ? "Iniciando sesión..." : "Iniciar Sesión con Google"}
         </button>
 
+        <div className="mt-4">
+          <button
+            className="btn-teacher w-full flex items-center justify-center gap-2 py-3 px-6 rounded-2xl font-medium text-sm cursor-pointer"
+            onClick={onTeacher}
+            disabled={loading}
+          >
+            👁️ Entrar como Profesor / Invitado
+          </button>
+        </div>
+
         <p className="mt-6 text-xs text-gray-400">Proyecto escolar · Educación financiera</p>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PANTALLA: Login Profesor
+// ═══════════════════════════════════════════════════════════════════════════
+function TeacherLoginScreen({
+  onAccess,
+  onBack,
+}: {
+  onAccess: () => void;
+  onBack: () => void;
+}) {
+  const [pass, setPass] = useState("");
+  const [error, setError] = useState("");
+  const [show, setShow] = useState(false);
+
+  const handleSubmit = () => {
+    if (pass === TEACHER_PASSWORD) {
+      onAccess();
+    } else {
+      setError("Contraseña incorrecta. Inténtalo de nuevo.");
+      setPass("");
+    }
+  };
+
+  return (
+    <div className="screen-bg flex items-center justify-center p-4 min-h-screen">
+      <div className="glass-card rounded-3xl p-8 w-full max-w-sm animate-pop-in text-center">
+        <div className="text-5xl mb-4">👁️</div>
+        <h2 className="text-xl font-extrabold text-gray-900 mb-1">Acceso Profesor / Invitado</h2>
+        <p className="text-gray-500 text-sm mb-6">Ingresa la clave secreta para continuar.</p>
+
+        <div className="space-y-3">
+          <div className="relative">
+            <input
+              type={show ? "text" : "password"}
+              className="input-field pr-12"
+              placeholder="Contraseña secreta"
+              value={pass}
+              onChange={(e) => { setPass(e.target.value); setError(""); }}
+              onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+              autoFocus
+            />
+            <button
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer"
+              onClick={() => setShow((s) => !s)}
+              tabIndex={-1}
+            >
+              {show ? "🙈" : "👁️"}
+            </button>
+          </div>
+
+          {error && (
+            <p className="text-red-500 text-sm font-medium animate-slide-down">⚠️ {error}</p>
+          )}
+
+          <button
+            className="btn-primary w-full py-3.5 rounded-2xl font-bold text-sm cursor-pointer"
+            onClick={handleSubmit}
+          >
+            Ingresar →
+          </button>
+
+          <button
+            className="w-full py-2 text-sm text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
+            onClick={onBack}
+          >
+            ← Volver al inicio
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PANTALLA: Panel Profesor
+// ═══════════════════════════════════════════════════════════════════════════
+function TeacherScreen({ onBack }: { onBack: () => void }) {
+  const [aulaInput, setAulaInput] = useState("");
+  const [aulaQuery, setAulaQuery] = useState("");
+  const [stats, setStats] = useState<Awaited<ReturnType<typeof fetchClassroomStats>> | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [searched, setSearched] = useState(false);
+
+  const handleSearch = async () => {
+    const code = aulaInput.trim().toUpperCase();
+    if (!code) return;
+    setLoading(true);
+    setAulaQuery(code);
+    const result = await fetchClassroomStats(code);
+    setStats(result);
+    setSearched(true);
+    setLoading(false);
+  };
+
+  const medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
+
+  return (
+    <div className="screen-bg min-h-screen p-4 pb-10">
+      <div className="max-w-xl mx-auto space-y-4 pt-6">
+
+        {/* Header */}
+        <div className="glass-card rounded-3xl p-5 animate-fade-in-up flex items-center justify-between">
+          <div>
+            <p className="text-xs font-bold text-purple-500 uppercase tracking-wider">Modo</p>
+            <h2 className="text-xl font-extrabold text-gray-900">Panel Profesor 👁️</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Vista completa del salón</p>
+          </div>
+          <button
+            className="text-sm text-gray-400 hover:text-red-500 cursor-pointer transition-colors font-medium"
+            onClick={onBack}
+          >
+            ← Salir
+          </button>
+        </div>
+
+        {/* Buscador de salón */}
+        <div className="glass-card rounded-3xl p-6 animate-fade-in-up" style={{ animationDelay: "0.06s" }}>
+          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">🔍 Buscar Salón</h3>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              className="input-field flex-1 uppercase tracking-widest"
+              placeholder="Ej: 3SEC-A"
+              value={aulaInput}
+              onChange={(e) => setAulaInput(e.target.value.toUpperCase())}
+              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+              maxLength={12}
+            />
+            <button
+              className="btn-primary px-5 py-2 rounded-2xl font-bold text-sm cursor-pointer whitespace-nowrap disabled:opacity-60"
+              onClick={handleSearch}
+              disabled={loading || !aulaInput.trim()}
+            >
+              {loading ? "⚙️" : "Ver →"}
+            </button>
+          </div>
+          <div className="flex gap-2 mt-2 flex-wrap">
+            {["3SEC-A", "2PRI-B", "1ECO-C"].map((c) => (
+              <button
+                key={c}
+                className="px-2 py-1 bg-gray-100 rounded-lg font-mono text-xs text-gray-500 hover:bg-purple-50 hover:text-purple-600 cursor-pointer transition-colors"
+                onClick={() => setAulaInput(c)}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Resultados */}
+        {searched && (
+          <>
+            {stats === null || stats.total === 0 ? (
+              <div className="glass-card rounded-3xl p-8 text-center animate-fade-in-up">
+                <div className="text-4xl mb-3">🔍</div>
+                <p className="font-bold text-gray-600">No se encontraron alumnos</p>
+                <p className="text-sm text-gray-400 mt-1">
+                  El salón <strong>{aulaQuery}</strong> no tiene alumnos registrados aún.
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* Stats del salón */}
+                <div className="glass-card rounded-3xl p-6 animate-fade-in-up" style={{ animationDelay: "0.1s" }}>
+                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">
+                    📊 Estadísticas · Salón {aulaQuery}
+                  </h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="stats-card bg-indigo-50 border-indigo-100">
+                      <p className="stats-label text-indigo-600">Alumnos</p>
+                      <p className="stats-value text-indigo-700">{stats.total}</p>
+                    </div>
+                    <div className="stats-card bg-green-50 border-green-100">
+                      <p className="stats-label text-green-600">Saldo Prom.</p>
+                      <p className="stats-value text-green-700">S/. {stats.avgSaldo.toFixed(2)}</p>
+                    </div>
+                    <div className="stats-card bg-orange-50 border-orange-100">
+                      <p className="stats-label text-orange-600">Mayor Racha</p>
+                      <p className="stats-value text-orange-700">{stats.maxRacha} 🔥</p>
+                    </div>
+                    <div className="stats-card bg-purple-50 border-purple-100">
+                      <p className="stats-label text-purple-600">Misión Hoy</p>
+                      <p className="stats-value text-purple-700">{stats.misionHoy}/{stats.total}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Ranking completo */}
+                <div className="glass-card rounded-3xl p-6 animate-fade-in-up" style={{ animationDelay: "0.16s" }}>
+                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">
+                    🏆 Top Alumnos · {aulaQuery}
+                  </h3>
+                  <div className="space-y-2">
+                    {stats.ranked.map((entry, i) => (
+                      <div key={i} className={`ranking-row ${i === 0 ? "ranking-row--gold" : i === 1 ? "ranking-row--silver" : i === 2 ? "ranking-row--bronze" : "ranking-row--default"}`}>
+                        <span className="ranking-pos">{medals[i]}</span>
+                        <span className="ranking-name flex-1">{entry.nombre}</span>
+                        <span className="ranking-racha">🔥 {entry.racha}d</span>
+                        <span className="ranking-saldo">S/. {entry.saldo.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        {!searched && (
+          <div className="text-center py-6 text-gray-400 text-sm">
+            🔍 Ingresa el código de un salón para ver sus estadísticas.
+          </div>
+        )}
       </div>
     </div>
   );
@@ -241,13 +535,89 @@ function ClassroomScreen({
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// COMPONENT: Ranking del Salón
+// ═══════════════════════════════════════════════════════════════════════════
+function RankingSection({ aula, currentUid }: { aula: string; currentUid?: string }) {
+  const [ranking, setRanking] = useState<RankEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [indexError, setIndexError] = useState(false);
+  const medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"];
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setIndexError(false);
+    fetchRanking(aula)
+      .then((data) => {
+        if (!cancelled) {
+          setRanking(data);
+          setLoading(false);
+          if (data.length === 0) setIndexError(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) { setLoading(false); setIndexError(true); }
+      });
+    return () => { cancelled = true; };
+  }, [aula]);
+
+  if (loading) {
+    return (
+      <div className="glass-card rounded-3xl p-6 text-center">
+        <p className="text-sm text-gray-400">⚙️ Cargando ranking...</p>
+      </div>
+    );
+  }
+
+  if (indexError || ranking.length === 0) {
+    return (
+      <div className="glass-card rounded-3xl p-5">
+        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">🏆 Ranking del Salón</h3>
+        <div className="text-center py-3">
+          <p className="text-sm text-gray-400">Sé el primero en completar una misión</p>
+          <p className="text-xs text-gray-300 mt-1">
+            Si el ranking no carga, el profesor debe crear el índice en Firestore.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="glass-card rounded-3xl p-6 animate-fade-in-up">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">🏆 Ranking · {aula}</h3>
+        <span className="text-xs text-gray-300">Top 5</span>
+      </div>
+      <div className="space-y-2">
+        {ranking.map((entry, i) => {
+          const isMe = entry.uid === currentUid;
+          return (
+            <div
+              key={i}
+              className={`ranking-row ${i === 0 ? "ranking-row--gold" : i === 1 ? "ranking-row--silver" : i === 2 ? "ranking-row--bronze" : "ranking-row--default"} ${isMe ? "ranking-row--me" : ""}`}
+            >
+              <span className="ranking-pos">{medals[i]}</span>
+              <span className="ranking-name flex-1">
+                {entry.nombre.split(" ")[0]}
+                {isMe && <span className="ml-1 text-xs text-indigo-500 font-bold">(tú)</span>}
+              </span>
+              <span className="ranking-racha">🔥 {entry.racha}d</span>
+              <span className="ranking-saldo">S/. {entry.saldo.toFixed(2)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MINIJUEGO: Limpiar el cuarto
 // ═══════════════════════════════════════════════════════════════════════════
 function MinigameScreen({ onComplete }: { onComplete: () => void }) {
   const [round, setRound] = useState(0);
-  const [objects, setObjects] = useState<RoomObject[]>(() =>
-    generateObjects(ROOM_CONFIGS[0], 0)
-  );
+  const [objects, setObjects] = useState<RoomObject[]>(() => generateObjects(ROOM_CONFIGS[0], 0));
   const [cursorPos, setCursorPos] = useState({ x: -200, y: -200 });
   const [showTransition, setShowTransition] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
@@ -266,9 +636,7 @@ function MinigameScreen({ onComplete }: { onComplete: () => void }) {
   }, []);
 
   const handleClean = useCallback((id: number) => {
-    setObjects((prev) =>
-      prev.map((o) => (o.id === id && !o.cleaned ? { ...o, cleaned: true } : o))
-    );
+    setObjects((prev) => prev.map((o) => (o.id === id && !o.cleaned ? { ...o, cleaned: true } : o)));
   }, []);
 
   useEffect(() => {
@@ -299,11 +667,11 @@ function MinigameScreen({ onComplete }: { onComplete: () => void }) {
       <div className="minigame-hud">
         <div className="minigame-hud-inner">
           <div className="hud-room-badge">🏠 {currentRoom.name}</div>
-          <div className="hud-round">Habitación {round + 1} de {ROOM_CONFIGS.length}</div>
+          <div className="hud-round">Habitación {round + 1}/{ROOM_CONFIGS.length}</div>
           <div className="hud-progress-wrap">
             <div className="hud-progress-bar" style={{ width: `${progress}%` }} />
           </div>
-          <div className="hud-count">{cleaned}/{total} limpiados</div>
+          <div className="hud-count">{cleaned}/{total}</div>
         </div>
       </div>
 
@@ -357,45 +725,38 @@ function MinigameScreen({ onComplete }: { onComplete: () => void }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PANTALLA: NPC Vagoneta — barra de 30 segundos
+// PANTALLA: NPC Vagoneta — barra 30 segundos
 // ═══════════════════════════════════════════════════════════════════════════
-const VAGONETA_SECONDS = 30;
-
 function VagonetaScreen({ onComplete }: { onComplete: () => void }) {
   const [elapsed, setElapsed] = useState(0);
-  const [done, setDone] = useState(false);
+  const done = elapsed >= VAGONETA_SECONDS;
+  const progress = Math.min((elapsed / VAGONETA_SECONDS) * 100, 100);
 
   useEffect(() => {
-    if (elapsed >= VAGONETA_SECONDS) {
-      setDone(true);
-      return;
-    }
+    if (done) return;
     const t = setTimeout(() => setElapsed((e) => e + 1), 1000);
     return () => clearTimeout(t);
-  }, [elapsed]);
-
-  const progress = Math.min((elapsed / VAGONETA_SECONDS) * 100, 100);
-  const remaining = VAGONETA_SECONDS - elapsed;
+  }, [elapsed, done]);
 
   return (
     <div className="screen-bg flex items-center justify-center p-4 min-h-screen">
       <div className="glass-card rounded-3xl p-10 w-full max-w-sm animate-pop-in text-center">
-        <div className="text-7xl mb-4" style={{ animation: done ? "none" : "coinBounce 1s ease infinite" }}>
+        <div className="text-7xl mb-4" style={{ animation: done ? "none" : "coinBounce 1.4s ease infinite" }}>
           {done ? "💸" : "😴"}
         </div>
         <h2 className="text-xl font-extrabold text-gray-900 mb-1">
-          {done ? "¡Listo, el NPC trabajó!" : "El NPC Vagoneta está trabajando..."}
+          {done ? "¡El NPC terminó!" : "NPC Vagoneta trabajando..."}
         </h2>
         <p className="text-gray-500 text-sm mb-6 leading-relaxed">
           {done
             ? "Te cobró S/. 0.50 de comisión. Ganaste S/. 1.50 netos."
-            : `El NPC Vagoneta hace el trabajo por ti... pero te cobra S/. 0.50 de comisión. Espera ${remaining}s.`}
+            : `El NPC hace el trabajo por ti... pero te cobra S/. 0.50 de comisión. Espera ${VAGONETA_SECONDS - elapsed}s.`}
         </p>
 
         <div className="mb-6">
           <div className="flex justify-between text-xs font-bold text-gray-400 mb-1">
-            <span>{done ? "¡Completado!" : "Progreso del NPC"}</span>
-            <span>{done ? "30/30s" : `${elapsed}/${VAGONETA_SECONDS}s`}</span>
+            <span>{done ? "✅ Completado" : "Progreso del NPC"}</span>
+            <span>{elapsed}/{VAGONETA_SECONDS}s</span>
           </div>
           <div className="w-full h-4 bg-gray-100 rounded-full overflow-hidden border border-gray-200">
             <div
@@ -403,16 +764,12 @@ function VagonetaScreen({ onComplete }: { onComplete: () => void }) {
               style={{
                 width: `${progress}%`,
                 background: done
-                  ? "linear-gradient(90deg, #10b981, #059669)"
-                  : "linear-gradient(90deg, #f59e0b, #d97706)",
+                  ? "linear-gradient(90deg,#10b981,#059669)"
+                  : "linear-gradient(90deg,#f59e0b,#d97706)",
               }}
             />
           </div>
-          {!done && (
-            <p className="mt-1 text-xs text-gray-400">
-              La flojera tiene un precio... 💸
-            </p>
-          )}
+          {!done && <p className="mt-1 text-xs text-gray-400">La flojera tiene un precio... 💸</p>}
         </div>
 
         {done && (
@@ -431,7 +788,11 @@ function VagonetaScreen({ onComplete }: { onComplete: () => void }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // PANTALLA: Victoria (Misión Manual)
 // ═══════════════════════════════════════════════════════════════════════════
-function VictoryScreen({ newBalance, newRacha, onContinue }: {
+function VictoryScreen({
+  newBalance,
+  newRacha,
+  onContinue,
+}: {
   newBalance: number;
   newRacha: number;
   onContinue: () => void;
@@ -459,14 +820,14 @@ function VictoryScreen({ newBalance, newRacha, onContinue }: {
           </div>
           <p className="text-xs text-gray-400 pt-1">Saldo: S/. {newBalance.toFixed(2)}</p>
         </div>
-        <p className="mt-5 text-xs text-gray-400">Guardando en la nube...</p>
+        <p className="mt-5 text-xs text-gray-400">Guardando en la nube... regresando al panel.</p>
       </div>
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PANTALLA: Panel del juego
+// PANTALLA: Panel del Juego
 // ═══════════════════════════════════════════════════════════════════════════
 function GameScreen({
   user,
@@ -495,51 +856,41 @@ function GameScreen({
 
   const showMsg = (m: typeof message) => {
     setMessage(m);
-    setTimeout(() => setMessage(null), 6000);
+    setTimeout(() => setMessage(null), 7000);
   };
 
   const triggerBounce = () => {
-    setBalanceAnim(true);
-    setTimeout(() => setBalanceAnim(false), 600);
+    setBalanceAnim(false);
+    setTimeout(() => setBalanceAnim(true), 10);
+    setTimeout(() => setBalanceAnim(false), 700);
   };
 
   useEffect(() => {
     type RewardFn = (amount: number, tipo: "manual" | "vagoneta") => void;
     (window as Window & { __applyMissionReward?: RewardFn }).__applyMissionReward =
       (amount: number, tipo: "manual" | "vagoneta") => {
-        setLocalBalance((b) => {
-          const nb = b + amount;
-          triggerBounce();
-          return nb;
-        });
+        setLocalBalance((b) => b + amount);
+        triggerBounce();
         if (tipo === "manual") {
-          setHistory((h) => [
-            { type: "positive", text: "Misión Manual completada 💪", amount: `+S/. ${amount.toFixed(2)}` },
-            ...h,
-          ].slice(0, 6));
-          showMsg({
-            type: "success",
-            text: `¡Excelente! Ganaste S/. ${amount.toFixed(2)} limpiando tú mismo. ¡Eso es responsabilidad financiera! 💪`,
-          });
+          setHistory((h) =>
+            [{ type: "positive" as const, text: "Misión Manual completada 💪", amount: `+S/. ${amount.toFixed(2)}` }, ...h].slice(0, 6)
+          );
+          showMsg({ type: "success", text: `¡Excelente! Ganaste S/. ${amount.toFixed(2)} limpiando tú mismo. ¡Responsabilidad financiera! 💪` });
         } else {
-          setHistory((h) => [
-            { type: "negative", text: "NPC Vagoneta trabajó por ti 😴", amount: `+S/. ${amount.toFixed(2)}` },
-            ...h,
-          ].slice(0, 6));
-          showMsg({
-            type: "warning",
-            text: `El NPC Vagoneta te cobró S/. 0.50 de comisión. Ganaste S/. ${amount.toFixed(2)} netos. ¡La flojera cuesta!`,
-          });
+          setHistory((h) =>
+            [{ type: "negative" as const, text: "NPC Vagoneta trabajó por ti 😴", amount: `+S/. ${amount.toFixed(2)}` }, ...h].slice(0, 6)
+          );
+          showMsg({ type: "warning", text: `El NPC Vagoneta te cobró S/. 0.50. Ganaste S/. ${amount.toFixed(2)} netos. ¡La flojera cuesta dinero!` });
         }
         setLocked(true);
       };
   }, []);
 
   return (
-    <div className="screen-bg min-h-screen p-4 pb-10">
+    <div className="screen-bg min-h-screen p-4 pb-12">
       <div className="max-w-xl mx-auto space-y-4 pt-6">
 
-        {/* Header jugador */}
+        {/* Header */}
         <div className="glass-card rounded-3xl p-5 animate-fade-in-up flex items-center justify-between">
           <div>
             <p className="text-xs font-semibold text-indigo-500 uppercase tracking-wider">Jugador</p>
@@ -551,6 +902,11 @@ function GameScreen({
               <span className="px-2.5 py-0.5 bg-orange-50 text-orange-700 text-xs font-bold rounded-full border border-orange-100">
                 🔥 {displayRacha} día{displayRacha !== 1 ? "s" : ""}
               </span>
+              {locked && (
+                <span className="px-2.5 py-0.5 bg-green-50 text-green-700 text-xs font-bold rounded-full border border-green-100">
+                  ✅ Misión completada hoy
+                </span>
+              )}
             </div>
           </div>
           <div className="flex flex-col items-center gap-1">
@@ -567,33 +923,12 @@ function GameScreen({
         </div>
 
         {/* Saldo */}
-        <div className="glass-card rounded-3xl p-8 animate-fade-in-up text-center" style={{ animationDelay: "0.08s" }}>
+        <div className="glass-card rounded-3xl p-8 text-center animate-fade-in-up" style={{ animationDelay: "0.07s" }}>
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1">Saldo Acumulado</p>
-          <div
-            className={`balance-display text-6xl sm:text-7xl font-black tracking-tight ${balanceAnim ? "animate-coin-bounce" : ""}`}
-            key={String(balanceAnim)}
-          >
+          <div className={`balance-display text-6xl sm:text-7xl font-black tracking-tight ${balanceAnim ? "animate-coin-bounce" : ""}`}>
             {fmt(localBalance)}
           </div>
           <p className="mt-2 text-xs text-gray-400">Soles peruanos (S/.)</p>
-        </div>
-
-        {/* Misión del día */}
-        <div className="glass-card rounded-3xl p-5 animate-fade-in-up" style={{ animationDelay: "0.14s" }}>
-          <div className="flex items-center gap-3">
-            <div className="text-3xl">🎯</div>
-            <div>
-              <p className="text-xs font-bold text-indigo-500 uppercase tracking-wider">Misión de Hoy</p>
-              <p className="font-bold text-gray-800 text-sm mt-0.5">
-                Ganar S/. 2.00 limpiando tu cuarto
-              </p>
-              {locked && (
-                <span className="inline-block mt-1 px-2 py-0.5 bg-green-100 text-green-700 text-xs font-bold rounded-full">
-                  ✅ ¡Completada hoy!
-                </span>
-              )}
-            </div>
-          </div>
         </div>
 
         {/* Mensaje */}
@@ -603,21 +938,18 @@ function GameScreen({
           </div>
         )}
 
-        {/* Botones / bloqueado */}
-        <div className="glass-card rounded-3xl p-6 animate-fade-in-up space-y-4" style={{ animationDelay: "0.2s" }}>
-          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest text-center">Elige tu acción</h3>
+        {/* Acciones */}
+        <div className="glass-card rounded-3xl p-6 animate-fade-in-up space-y-4" style={{ animationDelay: "0.14s" }}>
+          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest text-center">Elige tu acción de hoy</h3>
 
           {locked ? (
-            <div className="rounded-2xl p-5 text-center" style={{ background: "#f3f4f6", border: "2px dashed #d1d5db" }}>
-              <div className="text-3xl mb-2">⏳</div>
+            <div className="rounded-2xl p-6 text-center" style={{ background: "#f3f4f6", border: "2px dashed #d1d5db" }}>
+              <div className="text-4xl mb-2">⏳</div>
               <p className="font-bold text-gray-500 text-sm">Ya realizaste tu misión por hoy.</p>
-              <p className="text-gray-400 text-xs mt-1">
-                Regresa mañana para seguir acumulando soles.
-              </p>
+              <p className="text-gray-400 text-xs mt-1">Regresa mañana para seguir acumulando soles.</p>
             </div>
           ) : (
             <>
-              {/* Misión Manual */}
               <button
                 className="btn-success w-full py-4 px-5 rounded-2xl font-bold text-base cursor-pointer text-left flex items-start gap-3"
                 onClick={onStartMinigame}
@@ -632,7 +964,6 @@ function GameScreen({
                 <span className="text-green-200 text-sm self-center">▶</span>
               </button>
 
-              {/* NPC Vagoneta */}
               <button
                 className="btn-warning w-full py-4 px-5 rounded-2xl font-bold text-base cursor-pointer text-left flex items-start gap-3"
                 onClick={onStartVagoneta}
@@ -646,7 +977,6 @@ function GameScreen({
                 </span>
               </button>
 
-              {/* Comparativa */}
               <div className="grid grid-cols-2 gap-2 pt-1">
                 <div className="rounded-xl p-2 text-center bg-green-50 border border-green-100">
                   <p className="text-xs text-green-600 font-semibold">Misión Manual</p>
@@ -663,10 +993,15 @@ function GameScreen({
           )}
         </div>
 
+        {/* Ranking */}
+        <div className="animate-fade-in-up" style={{ animationDelay: "0.21s" }}>
+          <RankingSection aula={userDoc.aula} currentUid={user.uid} />
+        </div>
+
         {/* Historial */}
         {history.length > 0 && (
-          <div className="glass-card rounded-3xl p-6 animate-fade-in-up" style={{ animationDelay: "0.28s" }}>
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">📋 Historial</h3>
+          <div className="glass-card rounded-3xl p-6 animate-fade-in-up" style={{ animationDelay: "0.27s" }}>
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">📋 Historial de sesión</h3>
             <div className="space-y-2">
               {history.map((item, i) => (
                 <div key={i} className={`history-item ${item.type}`}>
@@ -701,9 +1036,9 @@ export default function App() {
   const [missionDoneToday, setMissionDoneToday] = useState(false);
   const [victoryData, setVictoryData] = useState({ newBalance: 0, newRacha: 1 });
 
-  // ── Observador de auth ──────────────────────────────────────────────────
+  // ── Observador de Auth ───────────────────────────────────────────────────
   useEffect(() => {
-    if (!FIREBASE_CONFIGURED || !auth) { setScreen("login"); return; }
+    if (!auth) { setScreen("login"); return; }
 
     const unsub = onAuthStateChanged(auth, async (u) => {
       if (!u) {
@@ -713,32 +1048,35 @@ export default function App() {
         return;
       }
       setFirebaseUser(u);
+      setScreen("loading");
       await loadUserDoc(u);
     });
     return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Cargar datos de Firestore ───────────────────────────────────────────
+  // ── Cargar datos de Firestore ────────────────────────────────────────────
   const loadUserDoc = async (u: User) => {
     try {
       const snap = await getDoc(doc(db!, "usuarios", u.uid));
       if (!snap.exists()) {
+        // Usuario nuevo → pedir aula
         setScreen("classroom");
         return;
       }
       const data = snap.data() as UserDoc;
       setUserDoc(data);
-      computeStreak(data);
+      applyStreak(data);
       setScreen("game");
     } catch (e) {
-      console.error(e);
-      setAuthError("Error al cargar tus datos. Revisa la conexión y las reglas de Firestore.");
+      console.error("Error cargando usuario:", e);
+      setAuthError("Error al cargar tus datos. Verifica las reglas de Firestore.");
       setScreen("login");
     }
   };
 
-  // ── Calcular racha y bloqueo ────────────────────────────────────────────
-  const computeStreak = (data: UserDoc) => {
+  // ── Calcular racha y bloqueo diario ─────────────────────────────────────
+  const applyStreak = (data: UserDoc) => {
     const today = todayStr();
     const yesterday = yesterdayStr();
     const last = data.ultimaMision;
@@ -754,16 +1092,16 @@ export default function App() {
     }
   };
 
-  const calcNewRacha = (data: UserDoc): number => {
-    return data.ultimaMision === yesterdayStr() ? data.racha + 1 : 1;
-  };
+  const calcNewRacha = (data: UserDoc): number =>
+    data.ultimaMision === yesterdayStr() ? data.racha + 1 : 1;
 
-  // ── Login ───────────────────────────────────────────────────────────────
+  // ── Login Google ─────────────────────────────────────────────────────────
   const handleLogin = async () => {
     setAuthError(null);
     setAuthLoading(true);
     try {
       await signInWithPopup(auth!, googleProvider!);
+      // onAuthStateChanged se encarga del resto
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "";
       if (!msg.includes("popup-closed")) {
@@ -774,18 +1112,22 @@ export default function App() {
     }
   };
 
-  // ── Unirse al salón ─────────────────────────────────────────────────────
+  // ── Login Profesor ───────────────────────────────────────────────────────
+  const handleTeacherAccess = () => setScreen("teacher");
+
+  // ── Registrar en Firestore al unirse al aula ─────────────────────────────
   const handleJoin = async (code: string) => {
     if (!firebaseUser) return;
     setSaveLoading(true);
     try {
+      const today = todayStr();
       const newDoc: UserDoc = {
         nombre: firebaseUser.displayName ?? "Estudiante",
         correo: firebaseUser.email ?? "",
         aula: code,
         saldo: 0,
-        racha: 0,
-        ultimaMision: null,
+        racha: 1,
+        ultimaMision: today,
       };
       await setDoc(doc(db!, "usuarios", firebaseUser.uid), {
         ...newDoc,
@@ -793,17 +1135,17 @@ export default function App() {
       });
       setUserDoc(newDoc);
       setDisplayRacha(1);
-      setMissionDoneToday(false);
+      setMissionDoneToday(true); // La fecha de hoy ya está puesta al crear
       setScreen("game");
     } catch (e) {
-      console.error(e);
-      setAuthError("Error al guardar en Firestore. Revisa las reglas de seguridad.");
+      console.error("Error al guardar aula:", e);
+      setAuthError("Error al guardar en Firestore. Verifica las reglas de seguridad.");
     } finally {
       setSaveLoading(false);
     }
   };
 
-  // ── Guardar misión en Firestore ─────────────────────────────────────────
+  // ── Guardar misión ───────────────────────────────────────────────────────
   const saveMission = async (amount: number): Promise<{ newBal: number; newRacha: number }> => {
     if (!firebaseUser || !userDoc) return { newBal: 0, newRacha: 1 };
     const newBal = userDoc.saldo + amount;
@@ -814,16 +1156,17 @@ export default function App() {
         racha: newRacha,
         ultimaMision: todayStr(),
       });
-      const updated = { ...userDoc, saldo: newBal, racha: newRacha, ultimaMision: todayStr() };
-      setUserDoc(updated);
+      setUserDoc((prev) =>
+        prev ? { ...prev, saldo: newBal, racha: newRacha, ultimaMision: todayStr() } : prev
+      );
       setDisplayRacha(newRacha);
     } catch (e) {
-      console.error("Error guardando en Firestore:", e);
+      console.error("Error guardando misión:", e);
     }
     return { newBal, newRacha };
   };
 
-  // ── Misión Manual → victory ─────────────────────────────────────────────
+  // ── Completar Misión Manual ──────────────────────────────────────────────
   const handleMinigameComplete = () => setScreen("victory");
 
   const handleVictoryContinue = async () => {
@@ -833,38 +1176,58 @@ export default function App() {
     setTimeout(() => {
       type RewardFn = (amount: number, tipo: "manual" | "vagoneta") => void;
       const fn = (window as Window & { __applyMissionReward?: RewardFn }).__applyMissionReward;
-      if (fn) fn(2.0, "manual");
-    }, 120);
+      fn?.(2.0, "manual");
+    }, 150);
   };
 
-  // ── NPC Vagoneta completa ───────────────────────────────────────────────
+  // ── Completar NPC Vagoneta ───────────────────────────────────────────────
   const handleVagonetaComplete = async () => {
-    const { newBal } = await saveMission(1.5);
+    const { newBal, newRacha } = await saveMission(1.5);
+    setVictoryData({ newBalance: newBal, newRacha });
     setScreen("game");
     setTimeout(() => {
       type RewardFn = (amount: number, tipo: "manual" | "vagoneta") => void;
       const fn = (window as Window & { __applyMissionReward?: RewardFn }).__applyMissionReward;
-      if (fn) fn(1.5, "vagoneta");
-    }, 120);
-    setVictoryData((v) => ({ ...v, newBalance: newBal }));
+      fn?.(1.5, "vagoneta");
+    }, 150);
   };
 
-  // ── Cerrar sesión ───────────────────────────────────────────────────────
+  // ── Cerrar sesión ────────────────────────────────────────────────────────
   const handleSignOut = async () => {
-    await signOut(auth!);
+    try { await signOut(auth!); } catch { /* ignore */ }
     setUserDoc(null);
     setFirebaseUser(null);
     setScreen("login");
   };
 
-  // ── Render ──────────────────────────────────────────────────────────────
+  // ── Render ───────────────────────────────────────────────────────────────
   if (screen === "loading") return <LoadingScreen message="Verificando sesión..." />;
 
   if (screen === "login")
-    return <LoginScreen onLogin={handleLogin} loading={authLoading} error={authError} />;
+    return (
+      <LoginScreen
+        onLogin={handleLogin}
+        onTeacher={() => setScreen("teacher-login")}
+        loading={authLoading}
+        error={authError}
+      />
+    );
+
+  if (screen === "teacher-login")
+    return (
+      <TeacherLoginScreen
+        onAccess={handleTeacherAccess}
+        onBack={() => setScreen("login")}
+      />
+    );
+
+  if (screen === "teacher")
+    return <TeacherScreen onBack={() => setScreen("login")} />;
 
   if (screen === "classroom" && firebaseUser)
-    return <ClassroomScreen user={firebaseUser} onJoin={handleJoin} loading={saveLoading} />;
+    return (
+      <ClassroomScreen user={firebaseUser} onJoin={handleJoin} loading={saveLoading} />
+    );
 
   if (screen === "minigame")
     return <MinigameScreen onComplete={handleMinigameComplete} />;

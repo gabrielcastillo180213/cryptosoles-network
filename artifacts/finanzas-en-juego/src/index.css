@@ -292,6 +292,116 @@
   color: #92400e;
 }
 
+/* ── Botón Profesor ───────────────────────────────────── */
+.btn-teacher {
+  background: rgba(124, 58, 237, 0.07);
+  color: #6d28d9;
+  border: 1.5px solid rgba(124, 58, 237, 0.2);
+  transition: all 0.2s ease;
+}
+
+.btn-teacher:hover {
+  background: rgba(124, 58, 237, 0.13);
+  border-color: rgba(124, 58, 237, 0.4);
+  transform: translateY(-1px);
+}
+
+.btn-teacher:active {
+  transform: translateY(0);
+}
+
+/* ── Ranking ──────────────────────────────────────────── */
+.ranking-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 0.75rem;
+  font-size: 0.875rem;
+  border: 1.5px solid transparent;
+  transition: transform 0.15s ease;
+}
+
+.ranking-row:hover {
+  transform: translateX(3px);
+}
+
+.ranking-row--gold {
+  background: linear-gradient(135deg, #fef9c3 0%, #fef08a 100%);
+  border-color: #fde047;
+}
+
+.ranking-row--silver {
+  background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
+  border-color: #d1d5db;
+}
+
+.ranking-row--bronze {
+  background: linear-gradient(135deg, #ffedd5 0%, #fed7aa 100%);
+  border-color: #fdba74;
+}
+
+.ranking-row--default {
+  background: #f9fafb;
+  border-color: #f3f4f6;
+}
+
+.ranking-row--me {
+  outline: 2px solid #6366f1;
+  outline-offset: 1px;
+}
+
+.ranking-pos {
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  width: 1.6rem;
+  text-align: center;
+}
+
+.ranking-name {
+  font-weight: 700;
+  color: #1f2937;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ranking-racha {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #d97706;
+  flex-shrink: 0;
+}
+
+.ranking-saldo {
+  font-weight: 800;
+  color: #065f46;
+  flex-shrink: 0;
+  font-size: 0.875rem;
+}
+
+/* ── Stats Cards (Profesor) ───────────────────────────── */
+.stats-card {
+  border-radius: 0.875rem;
+  padding: 0.65rem 0.75rem;
+  border: 1.5px solid;
+  text-align: center;
+}
+
+.stats-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.2rem;
+}
+
+.stats-value {
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
 /* ── Minigame ─────────────────────────────────────────── */
 
 .minigame-container {
