@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Finanzas en Juego"
+version = "1.0.0"
+id = "artifacts/finanzas-en-juego"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18631
+
+[services.development]
+run = "pnpm --filter @workspace/finanzas-en-juego run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/finanzas-en-juego", "run", "build" ]
+publicDir = "artifacts/finanzas-en-juego/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18631"
+BASE_PATH = "/"
