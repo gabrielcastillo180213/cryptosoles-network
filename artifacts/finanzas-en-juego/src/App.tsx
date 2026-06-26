@@ -25,12 +25,17 @@ import "./index.css";
 const TEACHER_PASSWORD = "profedpcc";
 const VAGONETA_SECONDS = 30;
 
-// ─── Helpers de fecha ─────────────────────────────────────────────────────
-const todayStr = () => new Date().toISOString().slice(0, 10);
+// ─── Helpers de fecha (tiempo LOCAL del dispositivo, no UTC) ───────────────
+// Usar hora local evita que alumnos en Perú (UTC-5) que juegan después de
+// las 7pm sean tratados como si ya fuera "mañana" en UTC.
+const localDateStr = (d: Date = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+const todayStr = () => localDateStr();
 const yesterdayStr = () => {
   const d = new Date();
   d.setDate(d.getDate() - 1);
-  return d.toISOString().slice(0, 10);
+  return localDateStr(d);
 };
 
 // ─── Tipos ────────────────────────────────────────────────────────────────
@@ -1126,7 +1131,6 @@ export default function App() {
     if (!firebaseUser) return;
     setSaveLoading(true);
     try {
-      const today = todayStr();
       const newDoc: UserDoc = {
         nombre: firebaseUser.displayName ?? "Estudiante",
         correo: firebaseUser.email ?? "",
