@@ -1,0 +1,31 @@
+Ya tengo mis credenciales reales de Firebase. Olvida la pantalla de instrucciones que creaste antes y genera el CÓDIGO COMPLETO del juego "Finanzas en Juego". 
+
+Quiero que crees directamente los archivos index.html, style.css y main.js (o ponlo todo en el index si es más fácil) integrando esta configuración real de Firebase que te dejo aquí:
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBSfvAIYZkGb91Ds7FMi_XVFINvF_x46sg",
+  authDomain: "finanzasenjuego-a31dd.firebaseapp.com",
+  projectId: "finanzasenjuego-a31dd",
+  storageBucket: "finanzasenjuego-a31dd.firebasestorage.app",
+  messagingSenderId: "847105120435",
+  appId: "1:847105120435:web:a5d30380c0b3a3c69f78c6",
+  measurementId: "G-K5Y7L9C5MT"
+};
+
+REQUISITOS DEL JUEGO QUE DEBES PROGRAMAR AHORA MISMO:
+1. PANTALLAS:
+- Pantalla 1: Login con botón para "Iniciar Sesión con Google" (usando Firebase Auth verdadero).
+- Pantalla 2: Aula. Si es usuario nuevo en Firestore, pide código de salón (ej: 3SEC-A) antes de jugar. Si ya existe en la colección "usuarios", pasa directo al juego.
+- Pantalla 3: Panel Principal. Muestra nombre, aula, días de racha actual y saldo grande (S/. 0.00).
+
+2. MECÁNICA 1: "Misión Manual" (Consumo Responsable)
+- Abre un minijuego de limpiar el cuarto. Muestra secuencialmente 3 pantallas de cuartos con objetos tirados (iconos/elementos clickeables). Al hacer clic en cada objeto, desaparece. Al limpiar los 3 cuartos, regresa al panel, suma S/. 2.00 al saldo en Firestore, actualiza la fecha de última misión a hoy y bloquea los botones.
+
+3. MECÁNICA 2: "NPC Vagoneta" (Consumo Irresponsable)
+- Cuesta S/. 0.50 y te deja S/. 1.50 de ganancia. Al presionarlo, muestra una barra de carga de 30 segundos. Al terminar, suma S/. 1.50 al saldo en Firestore, actualiza la fecha de última misión a hoy y bloquea los botones.
+
+4. CONTROL DE RACHAS Y LÍMITE DIARIO (EN FIRESTORE):
+- Solo se puede hacer 1 misión al día (Manual o NPC). Si la última misión en Firestore fue HOY, bloquea los botones con el mensaje: "⏳ Ya realizaste tu misión por hoy. Regresa mañana...".
+- Si la última misión fue AYER, mantiene la racha activa y suma +1 día. Si fue hace más de dos días, reinicia la racha a 1.
+
+Haz el código completo e integral ahora mismo sin dejar comentarios de "agrega el código aquí". ¡Hazlo funcional ya!

@@ -24,7 +24,7 @@ const yesterdayStr = () => {
 };
 
 // ─── Tipos ─────────────────────────────────────────────────────────────────
-type Screen = "loading" | "login" | "classroom" | "game" | "minigame" | "victory";
+type Screen = "loading" | "login" | "classroom" | "game" | "minigame" | "vagoneta" | "victory";
 
 interface UserDoc {
   nombre: string;
@@ -45,7 +45,7 @@ interface RoomObject {
   scale: number;
 }
 
-// ─── Datos de habitaciones ─────────────────────────────────────────────────
+// ─── Habitaciones ─────────────────────────────────────────────────────────
 const ROOM_CONFIGS = [
   {
     name: "Tu Cuarto",
@@ -70,10 +70,7 @@ const ROOM_CONFIGS = [
   },
 ];
 
-function generateObjects(
-  config: (typeof ROOM_CONFIGS)[0],
-  round: number
-): RoomObject[] {
+function generateObjects(config: (typeof ROOM_CONFIGS)[0], round: number): RoomObject[] {
   const objs: RoomObject[] = [];
   const used: { x: number; y: number }[] = [];
   for (let i = 0; i < config.count + round; i++) {
@@ -99,58 +96,6 @@ function generateObjects(
   return objs;
 }
 
-
-// ═══════════════════════════════════════════════════════════════════════════
-// PANTALLA: Sin configurar
-// ═══════════════════════════════════════════════════════════════════════════
-function NotConfiguredScreen() {
-  return (
-    <div className="screen-bg flex items-center justify-center p-4 min-h-screen">
-      <div className="glass-card rounded-3xl p-8 w-full max-w-lg animate-fade-in-up">
-        <div className="text-5xl text-center mb-4">⚙️</div>
-        <h2 className="text-xl font-extrabold text-gray-900 text-center mb-2">
-          Configura Firebase
-        </h2>
-        <p className="text-gray-500 text-sm text-center mb-6">
-          Antes de usar la app, pega tus llaves en el archivo:
-        </p>
-        <div className="bg-gray-900 rounded-2xl p-4 text-xs font-mono text-green-400 leading-relaxed overflow-x-auto mb-4">
-          <span className="text-gray-500">// src/firebase.ts</span>
-          <br />
-          <span className="text-yellow-300">const</span> firebaseConfig = {"{"}
-          <br />
-          {"  "}<span className="text-blue-300">apiKey</span>:{" "}
-          <span className="text-orange-300">"TU_API_KEY"</span>,
-          <br />
-          {"  "}<span className="text-blue-300">authDomain</span>:{" "}
-          <span className="text-orange-300">"TU_AUTH_DOMAIN"</span>,
-          <br />
-          {"  "}<span className="text-blue-300">projectId</span>:{" "}
-          <span className="text-orange-300">"TU_PROJECT_ID"</span>,
-          <br />
-          {"  "}<span className="text-blue-300">storageBucket</span>:{" "}
-          <span className="text-orange-300">"TU_BUCKET"</span>,
-          <br />
-          {"  "}<span className="text-blue-300">messagingSenderId</span>:{" "}
-          <span className="text-orange-300">"TU_SENDER_ID"</span>,
-          <br />
-          {"  "}<span className="text-blue-300">appId</span>:{" "}
-          <span className="text-orange-300">"TU_APP_ID"</span>,
-          <br />
-          {"}"};
-        </div>
-        <ol className="text-xs text-gray-500 space-y-1 list-decimal list-inside">
-          <li>Ve a <strong>console.firebase.google.com</strong></li>
-          <li>Selecciona tu proyecto → Configuración → Tus apps</li>
-          <li>Copia el objeto <code>firebaseConfig</code> y pégalo arriba</li>
-          <li>Habilita <strong>Authentication → Google</strong> en Firebase Console</li>
-          <li>Crea la colección <strong>usuarios</strong> en Firestore</li>
-        </ol>
-      </div>
-    </div>
-  );
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // PANTALLA: Cargando
 // ═══════════════════════════════════════════════════════════════════════════
@@ -158,8 +103,8 @@ function LoadingScreen({ message }: { message?: string }) {
   return (
     <div className="screen-bg flex items-center justify-center min-h-screen">
       <div className="text-center animate-fade-in-up">
-        <div className="text-5xl mb-4 animate-spin" style={{ display: "inline-block" }}>⚙️</div>
-        <p className="text-gray-500 font-medium">{message ?? "Cargando..."}</p>
+        <div className="text-5xl mb-4" style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⚙️</div>
+        <p className="text-gray-500 font-medium mt-3">{message ?? "Cargando..."}</p>
       </div>
     </div>
   );
@@ -203,7 +148,7 @@ function LoginScreen({
           disabled={loading}
         >
           {loading ? (
-            <span className="animate-spin">⚙️</span>
+            <span>⚙️</span>
           ) : (
             <svg width="22" height="22" viewBox="0 0 48 48" fill="none">
               <path d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z" fill="#FFC107"/>
@@ -269,7 +214,7 @@ function ClassroomScreen({
           {error && (
             <p className="text-red-500 text-sm font-medium animate-slide-down">⚠️ {error}</p>
           )}
-          <div className="flex gap-2 justify-center">
+          <div className="flex gap-2 justify-center flex-wrap">
             {["3SEC-A", "2PRI-B", "1ECO-C"].map((c) => (
               <button
                 key={c}
@@ -296,7 +241,7 @@ function ClassroomScreen({
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MINIJUEGO
+// MINIJUEGO: Limpiar el cuarto
 // ═══════════════════════════════════════════════════════════════════════════
 function MinigameScreen({ onComplete }: { onComplete: () => void }) {
   const [round, setRound] = useState(0);
@@ -412,7 +357,79 @@ function MinigameScreen({ onComplete }: { onComplete: () => void }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PANTALLA: Victoria
+// PANTALLA: NPC Vagoneta — barra de 30 segundos
+// ═══════════════════════════════════════════════════════════════════════════
+const VAGONETA_SECONDS = 30;
+
+function VagonetaScreen({ onComplete }: { onComplete: () => void }) {
+  const [elapsed, setElapsed] = useState(0);
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    if (elapsed >= VAGONETA_SECONDS) {
+      setDone(true);
+      return;
+    }
+    const t = setTimeout(() => setElapsed((e) => e + 1), 1000);
+    return () => clearTimeout(t);
+  }, [elapsed]);
+
+  const progress = Math.min((elapsed / VAGONETA_SECONDS) * 100, 100);
+  const remaining = VAGONETA_SECONDS - elapsed;
+
+  return (
+    <div className="screen-bg flex items-center justify-center p-4 min-h-screen">
+      <div className="glass-card rounded-3xl p-10 w-full max-w-sm animate-pop-in text-center">
+        <div className="text-7xl mb-4" style={{ animation: done ? "none" : "coinBounce 1s ease infinite" }}>
+          {done ? "💸" : "😴"}
+        </div>
+        <h2 className="text-xl font-extrabold text-gray-900 mb-1">
+          {done ? "¡Listo, el NPC trabajó!" : "El NPC Vagoneta está trabajando..."}
+        </h2>
+        <p className="text-gray-500 text-sm mb-6 leading-relaxed">
+          {done
+            ? "Te cobró S/. 0.50 de comisión. Ganaste S/. 1.50 netos."
+            : `El NPC Vagoneta hace el trabajo por ti... pero te cobra S/. 0.50 de comisión. Espera ${remaining}s.`}
+        </p>
+
+        <div className="mb-6">
+          <div className="flex justify-between text-xs font-bold text-gray-400 mb-1">
+            <span>{done ? "¡Completado!" : "Progreso del NPC"}</span>
+            <span>{done ? "30/30s" : `${elapsed}/${VAGONETA_SECONDS}s`}</span>
+          </div>
+          <div className="w-full h-4 bg-gray-100 rounded-full overflow-hidden border border-gray-200">
+            <div
+              className="h-full rounded-full transition-all duration-1000"
+              style={{
+                width: `${progress}%`,
+                background: done
+                  ? "linear-gradient(90deg, #10b981, #059669)"
+                  : "linear-gradient(90deg, #f59e0b, #d97706)",
+              }}
+            />
+          </div>
+          {!done && (
+            <p className="mt-1 text-xs text-gray-400">
+              La flojera tiene un precio... 💸
+            </p>
+          )}
+        </div>
+
+        {done && (
+          <button
+            className="btn-success w-full py-3.5 px-6 rounded-2xl font-bold text-base cursor-pointer animate-pop-in"
+            onClick={onComplete}
+          >
+            Cobrar S/. 1.50 →
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PANTALLA: Victoria (Misión Manual)
 // ═══════════════════════════════════════════════════════════════════════════
 function VictoryScreen({ newBalance, newRacha, onContinue }: {
   newBalance: number;
@@ -430,8 +447,7 @@ function VictoryScreen({ newBalance, newRacha, onContinue }: {
         <div className="text-7xl mb-4 animate-coin-bounce">🏆</div>
         <h2 className="text-2xl font-extrabold text-gray-900 mb-2">¡Felicitaciones!</h2>
         <p className="text-gray-600 text-sm leading-relaxed mb-5">
-          Completaste la misión por tu propio esfuerzo.
-          Ahorraste <span className="font-bold text-indigo-600">S/. 1.90</span> en comisiones.
+          Limpiaste tú mismo y ganaste el máximo.
           ¡Eso es <span className="font-bold text-green-600">responsabilidad financiera</span>!
         </p>
         <div className="space-y-2">
@@ -441,15 +457,16 @@ function VictoryScreen({ newBalance, newRacha, onContinue }: {
           <div className="py-2 px-4 rounded-xl bg-orange-50 border border-orange-200 text-sm font-bold text-orange-700">
             🔥 Racha: {newRacha} día{newRacha !== 1 ? "s" : ""} consecutivo{newRacha !== 1 ? "s" : ""}
           </div>
+          <p className="text-xs text-gray-400 pt-1">Saldo: S/. {newBalance.toFixed(2)}</p>
         </div>
-        <p className="mt-5 text-xs text-gray-400">Guardando en la nube... volviendo al tablero</p>
+        <p className="mt-5 text-xs text-gray-400">Guardando en la nube...</p>
       </div>
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PANTALLA: Juego principal
+// PANTALLA: Panel del juego
 // ═══════════════════════════════════════════════════════════════════════════
 function GameScreen({
   user,
@@ -457,7 +474,7 @@ function GameScreen({
   missionDoneToday,
   displayRacha,
   onStartMinigame,
-  onFlojonazo,
+  onStartVagoneta,
   onSignOut,
 }: {
   user: User;
@@ -465,7 +482,7 @@ function GameScreen({
   missionDoneToday: boolean;
   displayRacha: number;
   onStartMinigame: () => void;
-  onFlojonazo: () => void;
+  onStartVagoneta: () => void;
   onSignOut: () => void;
 }) {
   const [localBalance, setLocalBalance] = useState(userDoc.saldo);
@@ -476,45 +493,44 @@ function GameScreen({
 
   const fmt = (n: number) => `S/. ${n.toFixed(2)}`;
 
+  const showMsg = (m: typeof message) => {
+    setMessage(m);
+    setTimeout(() => setMessage(null), 6000);
+  };
+
   const triggerBounce = () => {
     setBalanceAnim(true);
     setTimeout(() => setBalanceAnim(false), 600);
   };
 
-  const showMsg = (m: typeof message) => {
-    setMessage(m);
-    setTimeout(() => setMessage(null), 5500);
-  };
-
-  const handleFlojonazo = useCallback(async () => {
-    const newBal = localBalance + 0.1;
-    setLocalBalance(newBal);
-    triggerBounce();
-    setHistory((h) => [
-      { type: "negative", text: "Pagaste al NPC Flojonazo 😴", amount: "+S/. 0.10" },
-      ...h,
-    ].slice(0, 6));
-    showMsg({
-      type: "warning",
-      text: "Gastaste S/. 1.90 en comisiones. El NPC Flojonazo se quedó con casi todo. ¡Piénsalo dos veces! 😴",
-    });
-    setLocked(true);
-    await onFlojonazo();
-  }, [localBalance, onFlojonazo]);
-
   useEffect(() => {
-    (window as Window & { __applyMissionReward?: (b: number) => void }).__applyMissionReward =
-      (newBal: number) => {
-        setLocalBalance(newBal);
-        triggerBounce();
-        setHistory((h) => [
-          { type: "positive", text: "Misión manual completada 💪", amount: "+S/. 2.00" },
-          ...h,
-        ].slice(0, 6));
-        showMsg({
-          type: "success",
-          text: "¡Excelente! Ganaste S/. 2.00 limpiando tú mismo. ¡Eso es responsabilidad financiera! 💪",
+    type RewardFn = (amount: number, tipo: "manual" | "vagoneta") => void;
+    (window as Window & { __applyMissionReward?: RewardFn }).__applyMissionReward =
+      (amount: number, tipo: "manual" | "vagoneta") => {
+        setLocalBalance((b) => {
+          const nb = b + amount;
+          triggerBounce();
+          return nb;
         });
+        if (tipo === "manual") {
+          setHistory((h) => [
+            { type: "positive", text: "Misión Manual completada 💪", amount: `+S/. ${amount.toFixed(2)}` },
+            ...h,
+          ].slice(0, 6));
+          showMsg({
+            type: "success",
+            text: `¡Excelente! Ganaste S/. ${amount.toFixed(2)} limpiando tú mismo. ¡Eso es responsabilidad financiera! 💪`,
+          });
+        } else {
+          setHistory((h) => [
+            { type: "negative", text: "NPC Vagoneta trabajó por ti 😴", amount: `+S/. ${amount.toFixed(2)}` },
+            ...h,
+          ].slice(0, 6));
+          showMsg({
+            type: "warning",
+            text: `El NPC Vagoneta te cobró S/. 0.50 de comisión. Ganaste S/. ${amount.toFixed(2)} netos. ¡La flojera cuesta!`,
+          });
+        }
         setLocked(true);
       };
   }, []);
@@ -523,7 +539,7 @@ function GameScreen({
     <div className="screen-bg min-h-screen p-4 pb-10">
       <div className="max-w-xl mx-auto space-y-4 pt-6">
 
-        {/* Header */}
+        {/* Header jugador */}
         <div className="glass-card rounded-3xl p-5 animate-fade-in-up flex items-center justify-between">
           <div>
             <p className="text-xs font-semibold text-indigo-500 uppercase tracking-wider">Jugador</p>
@@ -550,12 +566,12 @@ function GameScreen({
           </div>
         </div>
 
-        {/* Balance */}
+        {/* Saldo */}
         <div className="glass-card rounded-3xl p-8 animate-fade-in-up text-center" style={{ animationDelay: "0.08s" }}>
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1">Saldo Acumulado</p>
           <div
             className={`balance-display text-6xl sm:text-7xl font-black tracking-tight ${balanceAnim ? "animate-coin-bounce" : ""}`}
-            key={localBalance}
+            key={String(balanceAnim)}
           >
             {fmt(localBalance)}
           </div>
@@ -601,6 +617,7 @@ function GameScreen({
             </div>
           ) : (
             <>
+              {/* Misión Manual */}
               <button
                 className="btn-success w-full py-4 px-5 rounded-2xl font-bold text-base cursor-pointer text-left flex items-start gap-3"
                 onClick={onStartMinigame}
@@ -609,24 +626,39 @@ function GameScreen({
                 <span className="flex-1">
                   <span className="block">Misión Manual</span>
                   <span className="block text-green-100 text-xs font-medium mt-0.5">
-                    Consumo Responsable · ¡Limpia y gana S/. 2.00!
+                    Consumo Responsable · Ganas S/. 2.00 completos
                   </span>
                 </span>
                 <span className="text-green-200 text-sm self-center">▶</span>
               </button>
 
+              {/* NPC Vagoneta */}
               <button
                 className="btn-warning w-full py-4 px-5 rounded-2xl font-bold text-base cursor-pointer text-left flex items-start gap-3"
-                onClick={handleFlojonazo}
+                onClick={onStartVagoneta}
               >
                 <span className="text-2xl">😴</span>
                 <span className="flex-1">
-                  <span className="block">Pagarle al NPC Flojonazo</span>
+                  <span className="block">NPC Vagoneta</span>
                   <span className="block text-yellow-100 text-xs font-medium mt-0.5">
-                    Consumo Irresponsable · Solo recibes S/. 0.10
+                    Consumo Irresponsable · Espera 30s · Solo recibes S/. 1.50
                   </span>
                 </span>
               </button>
+
+              {/* Comparativa */}
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <div className="rounded-xl p-2 text-center bg-green-50 border border-green-100">
+                  <p className="text-xs text-green-600 font-semibold">Misión Manual</p>
+                  <p className="text-lg font-extrabold text-green-700">S/. 2.00</p>
+                  <p className="text-xs text-green-500">máximo</p>
+                </div>
+                <div className="rounded-xl p-2 text-center bg-yellow-50 border border-yellow-100">
+                  <p className="text-xs text-yellow-600 font-semibold">NPC Vagoneta</p>
+                  <p className="text-lg font-extrabold text-yellow-700">S/. 1.50</p>
+                  <p className="text-xs text-yellow-500">−S/. 0.50 comisión</p>
+                </div>
+              </div>
             </>
           )}
         </div>
@@ -647,7 +679,7 @@ function GameScreen({
           </div>
         )}
 
-        <p className="text-center text-xs text-gray-400" style={{ animationDelay: "0.35s" }}>
+        <p className="text-center text-xs text-gray-400">
           💡 Cada decisión responsable suma a tu futuro financiero.
         </p>
       </div>
@@ -665,16 +697,13 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
-
-  // Racha calculada al momento de cargar el juego
   const [displayRacha, setDisplayRacha] = useState(1);
   const [missionDoneToday, setMissionDoneToday] = useState(false);
-  // Datos para la pantalla de victoria
   const [victoryData, setVictoryData] = useState({ newBalance: 0, newRacha: 1 });
 
   // ── Observador de auth ──────────────────────────────────────────────────
   useEffect(() => {
-    if (!FIREBASE_CONFIGURED || !auth) { setScreen("loading"); return; }
+    if (!FIREBASE_CONFIGURED || !auth) { setScreen("login"); return; }
 
     const unsub = onAuthStateChanged(auth, async (u) => {
       if (!u) {
@@ -689,58 +718,54 @@ export default function App() {
     return unsub;
   }, []);
 
-  // ── Carga documento de usuario desde Firestore ──────────────────────────
+  // ── Cargar datos de Firestore ───────────────────────────────────────────
   const loadUserDoc = async (u: User) => {
     try {
-      const ref = doc(db!, "usuarios", u.uid);
-      const snap = await getDoc(ref);
-
+      const snap = await getDoc(doc(db!, "usuarios", u.uid));
       if (!snap.exists()) {
         setScreen("classroom");
         return;
       }
-
       const data = snap.data() as UserDoc;
       setUserDoc(data);
-      computeStreakAndLock(data);
+      computeStreak(data);
       setScreen("game");
     } catch (e) {
       console.error(e);
-      setAuthError("Error al cargar tus datos. Revisa la conexión y la configuración de Firestore.");
+      setAuthError("Error al cargar tus datos. Revisa la conexión y las reglas de Firestore.");
       setScreen("login");
     }
   };
 
-  // ── Lógica de racha ─────────────────────────────────────────────────────
-  const computeStreakAndLock = (data: UserDoc) => {
+  // ── Calcular racha y bloqueo ────────────────────────────────────────────
+  const computeStreak = (data: UserDoc) => {
     const today = todayStr();
     const yesterday = yesterdayStr();
     const last = data.ultimaMision;
-
     if (last === today) {
-      // Ya completó hoy → bloqueado, racha guardada es la correcta
       setDisplayRacha(data.racha);
       setMissionDoneToday(true);
     } else if (last === yesterday) {
-      // Completó ayer → mostramos racha + 1 (se aplicará al completar)
       setDisplayRacha(data.racha + 1);
       setMissionDoneToday(false);
     } else {
-      // Más de 2 días o nunca → racha se reinicia a 1
       setDisplayRacha(1);
       setMissionDoneToday(false);
     }
   };
 
-  // ── Login con Google ─────────────────────────────────────────────────────
+  const calcNewRacha = (data: UserDoc): number => {
+    return data.ultimaMision === yesterdayStr() ? data.racha + 1 : 1;
+  };
+
+  // ── Login ───────────────────────────────────────────────────────────────
   const handleLogin = async () => {
     setAuthError(null);
     setAuthLoading(true);
     try {
       await signInWithPopup(auth!, googleProvider!);
-      // onAuthStateChanged se encarga del resto
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Error desconocido";
+      const msg = e instanceof Error ? e.message : "";
       if (!msg.includes("popup-closed")) {
         setAuthError("No se pudo iniciar sesión. Verifica que el dominio esté autorizado en Firebase Auth.");
       }
@@ -749,7 +774,7 @@ export default function App() {
     }
   };
 
-  // ── Unirse al salón (crea documento en Firestore) ────────────────────────
+  // ── Unirse al salón ─────────────────────────────────────────────────────
   const handleJoin = async (code: string) => {
     if (!firebaseUser) return;
     setSaveLoading(true);
@@ -778,64 +803,53 @@ export default function App() {
     }
   };
 
-  // ── Calcular nueva racha al completar misión ─────────────────────────────
-  const calcNewRacha = (data: UserDoc): number => {
-    const yesterday = yesterdayStr();
-    if (data.ultimaMision === yesterday) return data.racha + 1;
-    return 1;
+  // ── Guardar misión en Firestore ─────────────────────────────────────────
+  const saveMission = async (amount: number): Promise<{ newBal: number; newRacha: number }> => {
+    if (!firebaseUser || !userDoc) return { newBal: 0, newRacha: 1 };
+    const newBal = userDoc.saldo + amount;
+    const newRacha = calcNewRacha(userDoc);
+    try {
+      await updateDoc(doc(db!, "usuarios", firebaseUser.uid), {
+        saldo: newBal,
+        racha: newRacha,
+        ultimaMision: todayStr(),
+      });
+      const updated = { ...userDoc, saldo: newBal, racha: newRacha, ultimaMision: todayStr() };
+      setUserDoc(updated);
+      setDisplayRacha(newRacha);
+    } catch (e) {
+      console.error("Error guardando en Firestore:", e);
+    }
+    return { newBal, newRacha };
   };
 
-  // ── Completar misión manual (desde victory screen) ────────────────────────
+  // ── Misión Manual → victory ─────────────────────────────────────────────
   const handleMinigameComplete = () => setScreen("victory");
 
   const handleVictoryContinue = async () => {
-    if (!firebaseUser || !userDoc) return;
-    const newBal = userDoc.saldo + 2.0;
-    const newRacha = calcNewRacha(userDoc);
-
-    try {
-      await updateDoc(doc(db!, "usuarios", firebaseUser.uid), {
-        saldo: newBal,
-        racha: newRacha,
-        ultimaMision: todayStr(),
-      });
-      const updated = { ...userDoc, saldo: newBal, racha: newRacha, ultimaMision: todayStr() };
-      setUserDoc(updated);
-      setDisplayRacha(newRacha);
-    } catch (e) {
-      console.error("Error al guardar en Firestore:", e);
-    }
-
+    const { newBal, newRacha } = await saveMission(2.0);
     setVictoryData({ newBalance: newBal, newRacha });
     setScreen("game");
-
     setTimeout(() => {
-      const fn = (window as Window & { __applyMissionReward?: (b: number) => void }).__applyMissionReward;
-      if (fn) fn(newBal);
+      type RewardFn = (amount: number, tipo: "manual" | "vagoneta") => void;
+      const fn = (window as Window & { __applyMissionReward?: RewardFn }).__applyMissionReward;
+      if (fn) fn(2.0, "manual");
     }, 120);
   };
 
-  // ── Completar Flojonazo ──────────────────────────────────────────────────
-  const handleFlojonazo = async () => {
-    if (!firebaseUser || !userDoc) return;
-    const newBal = userDoc.saldo + 0.1;
-    const newRacha = calcNewRacha(userDoc);
-
-    try {
-      await updateDoc(doc(db!, "usuarios", firebaseUser.uid), {
-        saldo: newBal,
-        racha: newRacha,
-        ultimaMision: todayStr(),
-      });
-      const updated = { ...userDoc, saldo: newBal, racha: newRacha, ultimaMision: todayStr() };
-      setUserDoc(updated);
-      setDisplayRacha(newRacha);
-    } catch (e) {
-      console.error("Error al guardar en Firestore:", e);
-    }
+  // ── NPC Vagoneta completa ───────────────────────────────────────────────
+  const handleVagonetaComplete = async () => {
+    const { newBal } = await saveMission(1.5);
+    setScreen("game");
+    setTimeout(() => {
+      type RewardFn = (amount: number, tipo: "manual" | "vagoneta") => void;
+      const fn = (window as Window & { __applyMissionReward?: RewardFn }).__applyMissionReward;
+      if (fn) fn(1.5, "vagoneta");
+    }, 120);
+    setVictoryData((v) => ({ ...v, newBalance: newBal }));
   };
 
-  // ── Cerrar sesión ────────────────────────────────────────────────────────
+  // ── Cerrar sesión ───────────────────────────────────────────────────────
   const handleSignOut = async () => {
     await signOut(auth!);
     setUserDoc(null);
@@ -843,9 +857,7 @@ export default function App() {
     setScreen("login");
   };
 
-  // ── Render ───────────────────────────────────────────────────────────────
-  if (!FIREBASE_CONFIGURED) return <NotConfiguredScreen />;
-
+  // ── Render ──────────────────────────────────────────────────────────────
   if (screen === "loading") return <LoadingScreen message="Verificando sesión..." />;
 
   if (screen === "login")
@@ -856,6 +868,9 @@ export default function App() {
 
   if (screen === "minigame")
     return <MinigameScreen onComplete={handleMinigameComplete} />;
+
+  if (screen === "vagoneta")
+    return <VagonetaScreen onComplete={handleVagonetaComplete} />;
 
   if (screen === "victory")
     return (
@@ -874,7 +889,7 @@ export default function App() {
         missionDoneToday={missionDoneToday}
         displayRacha={displayRacha}
         onStartMinigame={() => setScreen("minigame")}
-        onFlojonazo={handleFlojonazo}
+        onStartVagoneta={() => setScreen("vagoneta")}
         onSignOut={handleSignOut}
       />
     );
