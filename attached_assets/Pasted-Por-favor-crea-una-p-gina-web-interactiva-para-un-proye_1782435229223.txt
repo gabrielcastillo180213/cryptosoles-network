@@ -1,0 +1,26 @@
+Por favor, crea una página web interactiva para un proyecto escolar llamada "Finanzas en Juego". 
+El diseño debe ser limpio, moderno y adaptable, con un estilo de tarjeta para los recuadros.
+
+LA ESTRUCTURA DEBE TENER 3 PANTALLAS:
+1. Pantalla de Bienvenida: Un recuadro grande que diga "Simulador de Finanzas Personales" con un botón grande y atractivo que diga "🔑 Iniciar Sesión con Google".
+2. Pantalla de Aula: Una vez "iniciada sesión", debe pedir el código de salón (ej: 3SEC-A) con un campo de texto y un botón "Unirse al Salón".
+3. Pantalla Principal del Juego: Muestra el nombre del jugador, el salón, y un saldo acumulado grande en "S/. 0.00". 
+
+Debajo del saldo, debe haber un bloque con la misión de hoy: "Misión: Ganar S/. 2.00 limpiando tu cuarto".
+
+IMPLEMENTA DOS MECÁNICAS DE BOTONES INTERACTIVOS:
+
+👉 MECÁNICA 1: "💪 Misión Manual" (Consumo Responsable)
+Al presionar el Botón "Misión Manual", la pantalla del juego desaparece y muestra una nueva pantalla de minijuego. 
+Esta pantalla debe tener un fondo de una habitación y mostrar aleatoriamente varios iconos de objetos tirados (papeles, ropa, juguetes). También muestra una "escoba" como cursor. 
+El jugador debe hacer clic en cada objeto para "limpiarlo" y hacerlo desaparecer. 
+Al limpiar todos los objetos, aparece una nueva pantalla de cuarto con más objetos tirados (en total son 3 pantallas de cuarto diferentes). 
+Al terminar las 3 pantallas de cuarto, el minijuego se cierra, vuelve a la Pantalla Principal, el saldo sube S/. 2.00, y muestra un mensaje de "Felicitaciones por tu esfuerzo y ahorro".
+
+👉 MECÁNICA 2: "😴 Pagarle al NPC 'Vagoneta'" (Consumo Irresponsable)
+Este botón debe ser visualmente tentador y decir: "Cuesta S/. 0.50 | Ganas S/. 1.50". 
+Al presionarlo, el botón se bloquea y muestra una barra de progreso que dice: "El NPC 'Vagoneta' está limpiando tu cuarto por ti... (Espera 30s)". 
+Después de esperar exactamente 30 segundos, el botón se desbloquea, la barra desaparece, y el saldo del jugador sube S/. 1.50 (que es S/. 2.00 de la misión menos S/. 0.50 de la comisión que le pagó al NPC). 
+Muestra un mensaje de advertencia: "Derroche: Por pagar comisión por comodidad, solo ganaste S/. 1.50".
+
+SIMULACIÓN: Por ahora, haz que todas estas mecánicas y la transición de pantallas funcionen puramente con JavaScript local y manipulación del DOM al presionar "Run", sin conexión real a base de datos.
