@@ -22,15 +22,16 @@ import { auth, googleProvider, db } from "./firebase";
 import "./index.css";
 
 // ─── Constantes ───────────────────────────────────────────────────────────
-const TEACHER_PASSWORD = "profedpcc";
 const VAGONETA_SECONDS = 30;
+const VIP_COST = 50;
+const MANUAL_BASE = 2.0;
+const VAGONETA_NET_BASE = 0.80;   // Costo NPC: S/. 1.20 → ganancia neta S/. 0.80
+const VAGONETA_COSTO = 1.20;
+const VIP_MULTIPLIER = 1.10;      // +10% ganancia diaria para VIPs
 
 // ─── Helpers de fecha (tiempo LOCAL del dispositivo, no UTC) ───────────────
-// Usar hora local evita que alumnos en Perú (UTC-5) que juegan después de
-// las 7pm sean tratados como si ya fuera "mañana" en UTC.
 const localDateStr = (d: Date = new Date()) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-
 const todayStr = () => localDateStr();
 const yesterdayStr = () => {
   const d = new Date();
@@ -42,10 +43,9 @@ const yesterdayStr = () => {
 type Screen =
   | "loading"
   | "login"
-  | "teacher-login"
-  | "teacher"
   | "classroom"
   | "game"
+  | "store"
   | "minigame"
   | "vagoneta"
   | "victory";
@@ -57,6 +57,8 @@ interface UserDoc {
   saldo: number;
   racha: number;
   ultimaMision: string | null;
+  isVIP: boolean;
+  inventory: string[];
 }
 
 interface RankEntry {
@@ -143,32 +145,6 @@ async function fetchRanking(aula: string): Promise<RankEntry[]> {
   }
 }
 
-// ─── Firestore: cargar estadísticas del salón (para Profesor) ─────────────
-async function fetchClassroomStats(aula: string) {
-  try {
-    // Usa el mismo índice compuesto: aula ASC + saldo DESC
-    const q = query(
-      collection(db!, "usuarios"),
-      where("aula", "==", aula),
-      orderBy("saldo", "desc")
-    );
-    const snap = await getDocs(q);
-    // Los docs ya vienen ordenados por saldo desc gracias al índice
-    const alumnos = snap.docs.map((d) => d.data() as UserDoc);
-    const total = alumnos.length;
-    const avgSaldo = total > 0 ? alumnos.reduce((s, a) => s + a.saldo, 0) / total : 0;
-    const maxRacha = total > 0 ? Math.max(...alumnos.map((a) => a.racha)) : 0;
-    const misionHoy = alumnos.filter((a) => a.ultimaMision === todayStr()).length;
-    // Ya ordenados → tomar los primeros 10
-    const ranked = alumnos
-      .slice(0, 10)
-      .map((a) => ({ nombre: a.nombre, saldo: a.saldo, racha: a.racha }));
-    return { total, avgSaldo, maxRacha, misionHoy, ranked };
-  } catch {
-    return null;
-  }
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // PANTALLA: Cargando
 // ═══════════════════════════════════════════════════════════════════════════
@@ -190,12 +166,10 @@ function LoadingScreen({ message }: { message?: string }) {
 // ═══════════════════════════════════════════════════════════════════════════
 function LoginScreen({
   onLogin,
-  onTeacher,
   loading,
   error,
 }: {
   onLogin: () => void;
-  onTeacher: () => void;
   loading: boolean;
   error: string | null;
 }) {
@@ -237,235 +211,7 @@ function LoginScreen({
           {loading ? "Iniciando sesión..." : "Iniciar Sesión con Google"}
         </button>
 
-        <div className="mt-4">
-          <button
-            className="btn-teacher w-full flex items-center justify-center gap-2 py-3 px-6 rounded-2xl font-medium text-sm cursor-pointer"
-            onClick={onTeacher}
-            disabled={loading}
-          >
-            👁️ Entrar como Profesor / Invitado
-          </button>
-        </div>
-
         <p className="mt-6 text-xs text-gray-400">Proyecto escolar · Educación financiera</p>
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// PANTALLA: Login Profesor
-// ═══════════════════════════════════════════════════════════════════════════
-function TeacherLoginScreen({
-  onAccess,
-  onBack,
-}: {
-  onAccess: () => void;
-  onBack: () => void;
-}) {
-  const [pass, setPass] = useState("");
-  const [error, setError] = useState("");
-  const [show, setShow] = useState(false);
-
-  const handleSubmit = () => {
-    if (pass === TEACHER_PASSWORD) {
-      onAccess();
-    } else {
-      setError("Contraseña incorrecta. Inténtalo de nuevo.");
-      setPass("");
-    }
-  };
-
-  return (
-    <div className="screen-bg flex items-center justify-center p-4 min-h-screen">
-      <div className="glass-card rounded-3xl p-8 w-full max-w-sm animate-pop-in text-center">
-        <div className="text-5xl mb-4">👁️</div>
-        <h2 className="text-xl font-extrabold text-gray-900 mb-1">Acceso Profesor / Invitado</h2>
-        <p className="text-gray-500 text-sm mb-6">Ingresa la clave secreta para continuar.</p>
-
-        <div className="space-y-3">
-          <div className="relative">
-            <input
-              type={show ? "text" : "password"}
-              className="input-field pr-12"
-              placeholder="Contraseña secreta"
-              value={pass}
-              onChange={(e) => { setPass(e.target.value); setError(""); }}
-              onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-              autoFocus
-            />
-            <button
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer"
-              onClick={() => setShow((s) => !s)}
-              tabIndex={-1}
-            >
-              {show ? "🙈" : "👁️"}
-            </button>
-          </div>
-
-          {error && (
-            <p className="text-red-500 text-sm font-medium animate-slide-down">⚠️ {error}</p>
-          )}
-
-          <button
-            className="btn-primary w-full py-3.5 rounded-2xl font-bold text-sm cursor-pointer"
-            onClick={handleSubmit}
-          >
-            Ingresar →
-          </button>
-
-          <button
-            className="w-full py-2 text-sm text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
-            onClick={onBack}
-          >
-            ← Volver al inicio
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// PANTALLA: Panel Profesor
-// ═══════════════════════════════════════════════════════════════════════════
-function TeacherScreen({ onBack }: { onBack: () => void }) {
-  const [aulaInput, setAulaInput] = useState("");
-  const [aulaQuery, setAulaQuery] = useState("");
-  const [stats, setStats] = useState<Awaited<ReturnType<typeof fetchClassroomStats>> | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [searched, setSearched] = useState(false);
-
-  const handleSearch = async () => {
-    const code = aulaInput.trim().toUpperCase();
-    if (!code) return;
-    setLoading(true);
-    setAulaQuery(code);
-    const result = await fetchClassroomStats(code);
-    setStats(result);
-    setSearched(true);
-    setLoading(false);
-  };
-
-  const medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
-
-  return (
-    <div className="screen-bg min-h-screen p-4 pb-10">
-      <div className="max-w-xl mx-auto space-y-4 pt-6">
-
-        {/* Header */}
-        <div className="glass-card rounded-3xl p-5 animate-fade-in-up flex items-center justify-between">
-          <div>
-            <p className="text-xs font-bold text-purple-500 uppercase tracking-wider">Modo</p>
-            <h2 className="text-xl font-extrabold text-gray-900">Panel Profesor 👁️</h2>
-            <p className="text-xs text-gray-400 mt-0.5">Vista completa del salón</p>
-          </div>
-          <button
-            className="text-sm text-gray-400 hover:text-red-500 cursor-pointer transition-colors font-medium"
-            onClick={onBack}
-          >
-            ← Salir
-          </button>
-        </div>
-
-        {/* Buscador de salón */}
-        <div className="glass-card rounded-3xl p-6 animate-fade-in-up" style={{ animationDelay: "0.06s" }}>
-          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">🔍 Buscar Salón</h3>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              className="input-field flex-1 uppercase tracking-widest"
-              placeholder="Ej: 3SEC-A"
-              value={aulaInput}
-              onChange={(e) => setAulaInput(e.target.value.toUpperCase())}
-              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-              maxLength={12}
-            />
-            <button
-              className="btn-primary px-5 py-2 rounded-2xl font-bold text-sm cursor-pointer whitespace-nowrap disabled:opacity-60"
-              onClick={handleSearch}
-              disabled={loading || !aulaInput.trim()}
-            >
-              {loading ? "⚙️" : "Ver →"}
-            </button>
-          </div>
-          <div className="flex gap-2 mt-2 flex-wrap">
-            {["3SEC-A", "2PRI-B", "1ECO-C"].map((c) => (
-              <button
-                key={c}
-                className="px-2 py-1 bg-gray-100 rounded-lg font-mono text-xs text-gray-500 hover:bg-purple-50 hover:text-purple-600 cursor-pointer transition-colors"
-                onClick={() => setAulaInput(c)}
-              >
-                {c}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Resultados */}
-        {searched && (
-          <>
-            {stats === null || stats.total === 0 ? (
-              <div className="glass-card rounded-3xl p-8 text-center animate-fade-in-up">
-                <div className="text-4xl mb-3">🔍</div>
-                <p className="font-bold text-gray-600">No se encontraron alumnos</p>
-                <p className="text-sm text-gray-400 mt-1">
-                  El salón <strong>{aulaQuery}</strong> no tiene alumnos registrados aún.
-                </p>
-              </div>
-            ) : (
-              <>
-                {/* Stats del salón */}
-                <div className="glass-card rounded-3xl p-6 animate-fade-in-up" style={{ animationDelay: "0.1s" }}>
-                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">
-                    📊 Estadísticas · Salón {aulaQuery}
-                  </h3>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <div className="stats-card bg-indigo-50 border-indigo-100">
-                      <p className="stats-label text-indigo-600">Alumnos</p>
-                      <p className="stats-value text-indigo-700">{stats.total}</p>
-                    </div>
-                    <div className="stats-card bg-green-50 border-green-100">
-                      <p className="stats-label text-green-600">Saldo Prom.</p>
-                      <p className="stats-value text-green-700">S/. {stats.avgSaldo.toFixed(2)}</p>
-                    </div>
-                    <div className="stats-card bg-orange-50 border-orange-100">
-                      <p className="stats-label text-orange-600">Mayor Racha</p>
-                      <p className="stats-value text-orange-700">{stats.maxRacha} 🔥</p>
-                    </div>
-                    <div className="stats-card bg-purple-50 border-purple-100">
-                      <p className="stats-label text-purple-600">Misión Hoy</p>
-                      <p className="stats-value text-purple-700">{stats.misionHoy}/{stats.total}</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Ranking completo */}
-                <div className="glass-card rounded-3xl p-6 animate-fade-in-up" style={{ animationDelay: "0.16s" }}>
-                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">
-                    🏆 Top Alumnos · {aulaQuery}
-                  </h3>
-                  <div className="space-y-2">
-                    {stats.ranked.map((entry, i) => (
-                      <div key={i} className={`ranking-row ${i === 0 ? "ranking-row--gold" : i === 1 ? "ranking-row--silver" : i === 2 ? "ranking-row--bronze" : "ranking-row--default"}`}>
-                        <span className="ranking-pos">{medals[i]}</span>
-                        <span className="ranking-name flex-1">{entry.nombre}</span>
-                        <span className="ranking-racha">🔥 {entry.racha}d</span>
-                        <span className="ranking-saldo">S/. {entry.saldo.toFixed(2)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
-          </>
-        )}
-
-        {!searched && (
-          <div className="text-center py-6 text-gray-400 text-sm">
-            🔍 Ingresa el código de un salón para ver sus estadísticas.
-          </div>
-        )}
       </div>
     </div>
   );
@@ -586,9 +332,6 @@ function RankingSection({ aula, currentUid }: { aula: string; currentUid?: strin
         <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">🏆 Ranking del Salón</h3>
         <div className="text-center py-3">
           <p className="text-sm text-gray-400">Sé el primero en completar una misión</p>
-          <p className="text-xs text-gray-300 mt-1">
-            Si el ranking no carga, el profesor debe crear el índice en Firestore.
-          </p>
         </div>
       </div>
     );
@@ -738,10 +481,11 @@ function MinigameScreen({ onComplete }: { onComplete: () => void }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // PANTALLA: NPC Vagoneta — barra 30 segundos
 // ═══════════════════════════════════════════════════════════════════════════
-function VagonetaScreen({ onComplete }: { onComplete: () => void }) {
+function VagonetaScreen({ onComplete, isVIP }: { onComplete: () => void; isVIP: boolean }) {
   const [elapsed, setElapsed] = useState(0);
   const done = elapsed >= VAGONETA_SECONDS;
   const progress = Math.min((elapsed / VAGONETA_SECONDS) * 100, 100);
+  const netGain = isVIP ? VAGONETA_NET_BASE * VIP_MULTIPLIER : VAGONETA_NET_BASE;
 
   useEffect(() => {
     if (done) return;
@@ -760,9 +504,15 @@ function VagonetaScreen({ onComplete }: { onComplete: () => void }) {
         </h2>
         <p className="text-gray-500 text-sm mb-6 leading-relaxed">
           {done
-            ? "Te cobró S/. 0.50 de comisión. Ganaste S/. 1.50 netos."
-            : `El NPC hace el trabajo por ti... pero te cobra S/. 0.50 de comisión. Espera ${VAGONETA_SECONDS - elapsed}s.`}
+            ? `Te cobró S/. ${VAGONETA_COSTO.toFixed(2)} de comisión. Ganaste S/. ${netGain.toFixed(2)} netos.`
+            : `El NPC hace el trabajo por ti... pero te cobra S/. ${VAGONETA_COSTO.toFixed(2)} de comisión. Espera ${VAGONETA_SECONDS - elapsed}s.`}
         </p>
+
+        {isVIP && done && (
+          <div className="mb-4 py-2 px-3 rounded-xl bg-yellow-50 border border-yellow-200 text-xs font-bold text-yellow-700">
+            👑 Bonus VIP +10% aplicado
+          </div>
+        )}
 
         <div className="mb-6">
           <div className="flex justify-between text-xs font-bold text-gray-400 mb-1">
@@ -788,7 +538,7 @@ function VagonetaScreen({ onComplete }: { onComplete: () => void }) {
             className="btn-success w-full py-3.5 px-6 rounded-2xl font-bold text-base cursor-pointer animate-pop-in"
             onClick={onComplete}
           >
-            Cobrar S/. 1.50 →
+            Cobrar S/. {netGain.toFixed(2)} →
           </button>
         )}
       </div>
@@ -802,10 +552,12 @@ function VagonetaScreen({ onComplete }: { onComplete: () => void }) {
 function VictoryScreen({
   newBalance,
   newRacha,
+  earned,
   onContinue,
 }: {
   newBalance: number;
   newRacha: number;
+  earned: number;
   onContinue: () => void;
 }) {
   useEffect(() => {
@@ -824,7 +576,7 @@ function VictoryScreen({
         </p>
         <div className="space-y-2">
           <div className="py-3 px-5 rounded-2xl message-success text-lg font-extrabold">
-            +S/. 2.00 al saldo 💰
+            +S/. {earned.toFixed(2)} al saldo 💰
           </div>
           <div className="py-2 px-4 rounded-xl bg-orange-50 border border-orange-200 text-sm font-bold text-orange-700">
             🔥 Racha: {newRacha} día{newRacha !== 1 ? "s" : ""} consecutivo{newRacha !== 1 ? "s" : ""}
@@ -838,6 +590,133 @@ function VictoryScreen({
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PANTALLA: Tienda / VIP
+// ═══════════════════════════════════════════════════════════════════════════
+function StoreScreen({
+  userDoc,
+  onBuyVIP,
+  onBack,
+  buying,
+}: {
+  userDoc: UserDoc;
+  onBuyVIP: () => void;
+  onBack: () => void;
+  buying: boolean;
+}) {
+  const canAffordVIP = userDoc.saldo >= VIP_COST;
+
+  return (
+    <div className="screen-bg min-h-screen p-4 pb-12">
+      <div className="max-w-xl mx-auto space-y-4 pt-6">
+
+        {/* Header */}
+        <div className="glass-card rounded-3xl p-5 animate-fade-in-up flex items-center justify-between">
+          <div>
+            <p className="text-xs font-semibold text-purple-500 uppercase tracking-wider">Economía</p>
+            <h2 className="text-xl font-extrabold text-gray-900">🛍️ Tienda</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Saldo disponible: <strong>S/. {userDoc.saldo.toFixed(2)}</strong>
+            </p>
+          </div>
+          <button
+            className="text-sm text-gray-400 hover:text-indigo-500 cursor-pointer transition-colors font-medium"
+            onClick={onBack}
+          >
+            ← Volver
+          </button>
+        </div>
+
+        {/* Estado VIP */}
+        {userDoc.isVIP ? (
+          <div className="glass-card rounded-3xl p-6 animate-fade-in-up text-center" style={{ animationDelay: "0.06s", background: "linear-gradient(135deg,#fef9c3,#fef3c7)" }}>
+            <div className="text-5xl mb-3">👑</div>
+            <h3 className="text-xl font-extrabold text-yellow-700 mb-1">¡Eres VIP!</h3>
+            <p className="text-yellow-600 text-sm leading-relaxed">
+              Tus ganancias diarias tienen un <strong>+10% de bonus</strong> aplicado automáticamente.
+            </p>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <div className="rounded-xl p-2 text-center bg-white/60 border border-yellow-200">
+                <p className="text-xs text-yellow-600 font-semibold">Misión Manual</p>
+                <p className="text-lg font-extrabold text-yellow-700">S/. {(MANUAL_BASE * VIP_MULTIPLIER).toFixed(2)}</p>
+                <p className="text-xs text-yellow-500">+10% VIP</p>
+              </div>
+              <div className="rounded-xl p-2 text-center bg-white/60 border border-yellow-200">
+                <p className="text-xs text-yellow-600 font-semibold">NPC Vagoneta</p>
+                <p className="text-lg font-extrabold text-yellow-700">S/. {(VAGONETA_NET_BASE * VIP_MULTIPLIER).toFixed(2)}</p>
+                <p className="text-xs text-yellow-500">+10% VIP</p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="glass-card rounded-3xl p-6 animate-fade-in-up" style={{ animationDelay: "0.06s" }}>
+            <div className="text-center mb-4">
+              <div className="text-5xl mb-3">👑</div>
+              <h3 className="text-xl font-extrabold text-gray-900 mb-1">Membresía VIP</h3>
+              <p className="text-gray-500 text-sm leading-relaxed">
+                Activa tu membresía VIP y gana <strong>+10% más</strong> en cada misión diaria, para siempre.
+              </p>
+            </div>
+
+            <div className="rounded-2xl p-4 bg-gray-50 border border-gray-200 mb-4 space-y-2">
+              <div className="flex items-center gap-2 text-sm text-gray-600">
+                <span>✅</span>
+                <span>Misión Manual: <strong>S/. {(MANUAL_BASE * VIP_MULTIPLIER).toFixed(2)}</strong> en vez de S/. {MANUAL_BASE.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-gray-600">
+                <span>✅</span>
+                <span>NPC Vagoneta: <strong>S/. {(VAGONETA_NET_BASE * VIP_MULTIPLIER).toFixed(2)}</strong> en vez de S/. {VAGONETA_NET_BASE.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-gray-600">
+                <span>✅</span>
+                <span>Badge exclusivo <strong>👑</strong> en el ranking</span>
+              </div>
+            </div>
+
+            <div className="text-center mb-4">
+              <p className="text-3xl font-black text-gray-900">S/. {VIP_COST.toFixed(2)}</p>
+              <p className="text-xs text-gray-400">pago único en soles ficticios</p>
+            </div>
+
+            {!canAffordVIP && (
+              <div className="mb-3 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm text-center">
+                ⚠️ Necesitas S/. {(VIP_COST - userDoc.saldo).toFixed(2)} más para activar el VIP.
+              </div>
+            )}
+
+            <button
+              className="btn-primary w-full py-4 rounded-2xl font-bold text-base cursor-pointer disabled:opacity-50"
+              onClick={onBuyVIP}
+              disabled={!canAffordVIP || buying}
+            >
+              {buying ? "⚙️ Activando..." : `👑 Activar VIP por S/. ${VIP_COST.toFixed(2)}`}
+            </button>
+          </div>
+        )}
+
+        {/* Inventario */}
+        <div className="glass-card rounded-3xl p-6 animate-fade-in-up" style={{ animationDelay: "0.12s" }}>
+          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">🎒 Inventario</h3>
+          {userDoc.inventory.length === 0 ? (
+            <div className="text-center py-4">
+              <p className="text-gray-400 text-sm">Tu inventario está vacío.</p>
+              <p className="text-gray-300 text-xs mt-1">Próximamente: ropa, avatares y más.</p>
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {userDoc.inventory.map((item, i) => (
+                <span key={i} className="px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full text-sm font-medium border border-indigo-100">
+                  {item}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // PANTALLA: Panel del Juego
 // ═══════════════════════════════════════════════════════════════════════════
 function GameScreen({
@@ -845,16 +724,20 @@ function GameScreen({
   userDoc,
   missionDoneToday,
   displayRacha,
+  isVIP,
   onStartMinigame,
   onStartVagoneta,
+  onOpenStore,
   onSignOut,
 }: {
   user: User;
   userDoc: UserDoc;
   missionDoneToday: boolean;
   displayRacha: number;
+  isVIP: boolean;
   onStartMinigame: () => void;
   onStartVagoneta: () => void;
+  onOpenStore: () => void;
   onSignOut: () => void;
 }) {
   const [localBalance, setLocalBalance] = useState(userDoc.saldo);
@@ -876,6 +759,9 @@ function GameScreen({
     setTimeout(() => setBalanceAnim(false), 700);
   };
 
+  const manualGain = isVIP ? MANUAL_BASE * VIP_MULTIPLIER : MANUAL_BASE;
+  const vagonetaGain = isVIP ? VAGONETA_NET_BASE * VIP_MULTIPLIER : VAGONETA_NET_BASE;
+
   useEffect(() => {
     type RewardFn = (amount: number, tipo: "manual" | "vagoneta") => void;
     (window as Window & { __applyMissionReward?: RewardFn }).__applyMissionReward =
@@ -891,7 +777,7 @@ function GameScreen({
           setHistory((h) =>
             [{ type: "negative" as const, text: "NPC Vagoneta trabajó por ti 😴", amount: `+S/. ${amount.toFixed(2)}` }, ...h].slice(0, 6)
           );
-          showMsg({ type: "warning", text: `El NPC Vagoneta te cobró S/. 0.50. Ganaste S/. ${amount.toFixed(2)} netos. ¡La flojera cuesta dinero!` });
+          showMsg({ type: "warning", text: `El NPC Vagoneta te cobró S/. ${VAGONETA_COSTO.toFixed(2)}. Ganaste S/. ${amount.toFixed(2)} netos. ¡La flojera cuesta dinero!` });
         }
         setLocked(true);
       };
@@ -913,17 +799,28 @@ function GameScreen({
               <span className="px-2.5 py-0.5 bg-orange-50 text-orange-700 text-xs font-bold rounded-full border border-orange-100">
                 🔥 {displayRacha} día{displayRacha !== 1 ? "s" : ""}
               </span>
+              {isVIP && (
+                <span className="px-2.5 py-0.5 bg-yellow-50 text-yellow-700 text-xs font-bold rounded-full border border-yellow-200">
+                  👑 VIP
+                </span>
+              )}
               {locked && (
                 <span className="px-2.5 py-0.5 bg-green-50 text-green-700 text-xs font-bold rounded-full border border-green-100">
-                  ✅ Misión completada hoy
+                  ✅ Misión hoy
                 </span>
               )}
             </div>
           </div>
-          <div className="flex flex-col items-center gap-1">
+          <div className="flex flex-col items-center gap-1.5">
             {user.photoURL && (
-              <img src={user.photoURL} alt="avatar" className="w-12 h-12 rounded-full border-2 border-indigo-200" />
+              <img src={user.photoURL} alt="avatar" className="w-11 h-11 rounded-full border-2 border-indigo-200" />
             )}
+            <button
+              className="text-xs text-purple-500 hover:text-purple-700 cursor-pointer font-semibold transition-colors"
+              onClick={onOpenStore}
+            >
+              🛍️ Tienda
+            </button>
             <button
               className="text-xs text-gray-400 hover:text-red-500 cursor-pointer transition-colors"
               onClick={onSignOut}
@@ -969,7 +866,8 @@ function GameScreen({
                 <span className="flex-1">
                   <span className="block">Misión Manual</span>
                   <span className="block text-green-100 text-xs font-medium mt-0.5">
-                    Consumo Responsable · Ganas S/. 2.00 completos
+                    Consumo Responsable · Ganas S/. {manualGain.toFixed(2)}
+                    {isVIP && " 👑+10%"}
                   </span>
                 </span>
                 <span className="text-green-200 text-sm self-center">▶</span>
@@ -983,7 +881,8 @@ function GameScreen({
                 <span className="flex-1">
                   <span className="block">NPC Vagoneta</span>
                   <span className="block text-yellow-100 text-xs font-medium mt-0.5">
-                    Consumo Irresponsable · Espera 30s · Solo recibes S/. 1.50
+                    Consumo Irresponsable · Espera 30s · Recibes S/. {vagonetaGain.toFixed(2)}
+                    {isVIP && " 👑+10%"}
                   </span>
                 </span>
               </button>
@@ -991,13 +890,13 @@ function GameScreen({
               <div className="grid grid-cols-2 gap-2 pt-1">
                 <div className="rounded-xl p-2 text-center bg-green-50 border border-green-100">
                   <p className="text-xs text-green-600 font-semibold">Misión Manual</p>
-                  <p className="text-lg font-extrabold text-green-700">S/. 2.00</p>
-                  <p className="text-xs text-green-500">máximo</p>
+                  <p className="text-lg font-extrabold text-green-700">S/. {manualGain.toFixed(2)}</p>
+                  <p className="text-xs text-green-500">{isVIP ? "con VIP 👑" : "máximo"}</p>
                 </div>
                 <div className="rounded-xl p-2 text-center bg-yellow-50 border border-yellow-100">
                   <p className="text-xs text-yellow-600 font-semibold">NPC Vagoneta</p>
-                  <p className="text-lg font-extrabold text-yellow-700">S/. 1.50</p>
-                  <p className="text-xs text-yellow-500">−S/. 0.50 comisión</p>
+                  <p className="text-lg font-extrabold text-yellow-700">S/. {vagonetaGain.toFixed(2)}</p>
+                  <p className="text-xs text-yellow-500">−S/. {VAGONETA_COSTO.toFixed(2)} comisión</p>
                 </div>
               </div>
             </>
@@ -1045,7 +944,9 @@ export default function App() {
   const [saveLoading, setSaveLoading] = useState(false);
   const [displayRacha, setDisplayRacha] = useState(1);
   const [missionDoneToday, setMissionDoneToday] = useState(false);
-  const [victoryData, setVictoryData] = useState({ newBalance: 0, newRacha: 1 });
+  const [victoryData, setVictoryData] = useState({ newBalance: 0, newRacha: 1, earned: 0 });
+  const [isVIP, setIsVIP] = useState(false);
+  const [buyingVIP, setBuyingVIP] = useState(false);
 
   // ── Observador de Auth ───────────────────────────────────────────────────
   useEffect(() => {
@@ -1071,13 +972,19 @@ export default function App() {
     try {
       const snap = await getDoc(doc(db!, "usuarios", u.uid));
       if (!snap.exists()) {
-        // Usuario nuevo → pedir aula
         setScreen("classroom");
         return;
       }
       const data = snap.data() as UserDoc;
-      setUserDoc(data);
-      applyStreak(data);
+      // Compatibilidad con docs antiguos sin isVIP/inventory
+      const normalized: UserDoc = {
+        ...data,
+        isVIP: data.isVIP ?? false,
+        inventory: data.inventory ?? [],
+      };
+      setUserDoc(normalized);
+      setIsVIP(normalized.isVIP);
+      applyStreak(normalized);
       setScreen("game");
     } catch (e) {
       console.error("Error cargando usuario:", e);
@@ -1112,7 +1019,6 @@ export default function App() {
     setAuthLoading(true);
     try {
       await signInWithPopup(auth!, googleProvider!);
-      // onAuthStateChanged se encarga del resto
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "";
       if (!msg.includes("popup-closed")) {
@@ -1122,9 +1028,6 @@ export default function App() {
       setAuthLoading(false);
     }
   };
-
-  // ── Login Profesor ───────────────────────────────────────────────────────
-  const handleTeacherAccess = () => setScreen("teacher");
 
   // ── Registrar en Firestore al unirse al aula ─────────────────────────────
   const handleJoin = async (code: string) => {
@@ -1137,13 +1040,16 @@ export default function App() {
         aula: code,
         saldo: 0,
         racha: 0,
-        ultimaMision: null, // null → alumno nuevo puede jugar inmediatamente
+        ultimaMision: null,
+        isVIP: false,
+        inventory: [],
       };
       await setDoc(doc(db!, "usuarios", firebaseUser.uid), {
         ...newDoc,
         creadoEn: serverTimestamp(),
       });
       setUserDoc(newDoc);
+      setIsVIP(false);
       setDisplayRacha(1);
       setMissionDoneToday(false);
       setScreen("game");
@@ -1155,10 +1061,11 @@ export default function App() {
     }
   };
 
-  // ── Guardar misión ───────────────────────────────────────────────────────
-  const saveMission = async (amount: number): Promise<{ newBal: number; newRacha: number }> => {
-    if (!firebaseUser || !userDoc) return { newBal: 0, newRacha: 1 };
-    const newBal = userDoc.saldo + amount;
+  // ── Guardar misión (aplica multiplicador VIP) ────────────────────────────
+  const saveMission = async (baseAmount: number): Promise<{ newBal: number; newRacha: number; earned: number }> => {
+    if (!firebaseUser || !userDoc) return { newBal: 0, newRacha: 1, earned: 0 };
+    const earned = isVIP ? +(baseAmount * VIP_MULTIPLIER).toFixed(2) : baseAmount;
+    const newBal = +(userDoc.saldo + earned).toFixed(2);
     const newRacha = calcNewRacha(userDoc);
     try {
       await updateDoc(doc(db!, "usuarios", firebaseUser.uid), {
@@ -1173,44 +1080,63 @@ export default function App() {
     } catch (e) {
       console.error("Error guardando misión:", e);
     }
-    return { newBal, newRacha };
+    return { newBal, newRacha, earned };
   };
 
   // ── Completar Misión Manual ──────────────────────────────────────────────
   const handleMinigameComplete = () => setScreen("victory");
 
   const handleVictoryContinue = async () => {
-    const { newBal, newRacha } = await saveMission(2.0);
-    setVictoryData({ newBalance: newBal, newRacha });
+    const { newBal, newRacha, earned } = await saveMission(MANUAL_BASE);
+    setVictoryData({ newBalance: newBal, newRacha, earned });
     setScreen("game");
     setTimeout(() => {
       type RewardFn = (amount: number, tipo: "manual" | "vagoneta") => void;
       const fn = (window as Window & { __applyMissionReward?: RewardFn }).__applyMissionReward;
-      fn?.(2.0, "manual");
+      fn?.(earned, "manual");
     }, 150);
   };
 
   // ── Completar NPC Vagoneta ───────────────────────────────────────────────
   const handleVagonetaComplete = async () => {
-    const { newBal, newRacha } = await saveMission(1.5);
-    setVictoryData({ newBalance: newBal, newRacha });
+    const { newBal, newRacha, earned } = await saveMission(VAGONETA_NET_BASE);
+    setVictoryData({ newBalance: newBal, newRacha, earned });
     setScreen("game");
     setTimeout(() => {
       type RewardFn = (amount: number, tipo: "manual" | "vagoneta") => void;
       const fn = (window as Window & { __applyMissionReward?: RewardFn }).__applyMissionReward;
-      fn?.(1.5, "vagoneta");
+      fn?.(earned, "vagoneta");
     }, 150);
+  };
+
+  // ── Comprar VIP ──────────────────────────────────────────────────────────
+  const handleBuyVIP = async () => {
+    if (!firebaseUser || !userDoc || userDoc.saldo < VIP_COST) return;
+    setBuyingVIP(true);
+    try {
+      const newBal = +(userDoc.saldo - VIP_COST).toFixed(2);
+      await updateDoc(doc(db!, "usuarios", firebaseUser.uid), {
+        saldo: newBal,
+        isVIP: true,
+      });
+      setUserDoc((prev) => prev ? { ...prev, saldo: newBal, isVIP: true } : prev);
+      setIsVIP(true);
+    } catch (e) {
+      console.error("Error comprando VIP:", e);
+    } finally {
+      setBuyingVIP(false);
+    }
   };
 
   // ── Cerrar sesión ────────────────────────────────────────────────────────
   const handleSignOut = async () => {
     try { await signOut(auth!); } catch { /* ignore */ }
-    // Resetear TODO el estado del usuario para que no se filtre al siguiente
     setUserDoc(null);
     setFirebaseUser(null);
     setMissionDoneToday(false);
     setDisplayRacha(1);
-    setVictoryData({ newBalance: 0, newRacha: 1 });
+    setIsVIP(false);
+    setVictoryData({ newBalance: 0, newRacha: 1, earned: 0 });
     setAuthError(null);
     setScreen("login");
   };
@@ -1219,43 +1145,34 @@ export default function App() {
   if (screen === "loading") return <LoadingScreen message="Verificando sesión..." />;
 
   if (screen === "login")
-    return (
-      <LoginScreen
-        onLogin={handleLogin}
-        onTeacher={() => setScreen("teacher-login")}
-        loading={authLoading}
-        error={authError}
-      />
-    );
-
-  if (screen === "teacher-login")
-    return (
-      <TeacherLoginScreen
-        onAccess={handleTeacherAccess}
-        onBack={() => setScreen("login")}
-      />
-    );
-
-  if (screen === "teacher")
-    return <TeacherScreen onBack={() => setScreen("login")} />;
+    return <LoginScreen onLogin={handleLogin} loading={authLoading} error={authError} />;
 
   if (screen === "classroom" && firebaseUser)
-    return (
-      <ClassroomScreen user={firebaseUser} onJoin={handleJoin} loading={saveLoading} />
-    );
+    return <ClassroomScreen user={firebaseUser} onJoin={handleJoin} loading={saveLoading} />;
 
   if (screen === "minigame")
     return <MinigameScreen onComplete={handleMinigameComplete} />;
 
   if (screen === "vagoneta")
-    return <VagonetaScreen onComplete={handleVagonetaComplete} />;
+    return <VagonetaScreen onComplete={handleVagonetaComplete} isVIP={isVIP} />;
 
   if (screen === "victory")
     return (
       <VictoryScreen
         newBalance={victoryData.newBalance}
         newRacha={victoryData.newRacha}
+        earned={victoryData.earned}
         onContinue={handleVictoryContinue}
+      />
+    );
+
+  if (screen === "store" && userDoc)
+    return (
+      <StoreScreen
+        userDoc={userDoc}
+        onBuyVIP={handleBuyVIP}
+        onBack={() => setScreen("game")}
+        buying={buyingVIP}
       />
     );
 
@@ -1266,8 +1183,10 @@ export default function App() {
         userDoc={userDoc}
         missionDoneToday={missionDoneToday}
         displayRacha={displayRacha}
+        isVIP={isVIP}
         onStartMinigame={() => setScreen("minigame")}
         onStartVagoneta={() => setScreen("vagoneta")}
+        onOpenStore={() => setScreen("store")}
         onSignOut={handleSignOut}
       />
     );
