@@ -1044,6 +1044,7 @@ function GameScreen({
   const [message, setMessage] = useState<{ type: "success" | "warning"; text: string } | null>(null);
   const [history, setHistory] = useState<Array<{ type: "positive" | "negative"; text: string; amount: string }>>([]);
   const [locked, setLocked] = useState(missionDoneToday);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const fmt = (n: number) => `S/. ${n.toFixed(2)}`;
 
@@ -1120,29 +1121,61 @@ function GameScreen({
             </div>
           </div>
 
-          <div className="flex flex-col items-center gap-1.5">
+          {/* Menú discreto — evita presionar "Salir" por error */}
+          <div className="relative flex-shrink-0">
             <button
-              className="text-xs text-purple-500 hover:text-purple-700 cursor-pointer font-semibold transition-colors"
-              onClick={onOpenStore}
+              className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 text-lg cursor-pointer transition-colors"
+              onClick={() => setMenuOpen((o) => !o)}
+              aria-label="Menú"
             >
-              🛍️ Tienda
+              ⋯
             </button>
-            <button
-              className="text-xs text-gray-400 hover:text-red-500 cursor-pointer transition-colors"
-              onClick={onSignOut}
-            >
-              Salir
-            </button>
+            {menuOpen && (
+              <>
+                {/* Overlay para cerrar al hacer clic fuera */}
+                <div
+                  className="fixed inset-0 z-10"
+                  onClick={() => setMenuOpen(false)}
+                />
+                <div
+                  className="absolute right-0 top-11 z-20 rounded-2xl shadow-lg border border-gray-100 overflow-hidden"
+                  style={{ background: "white", minWidth: 160 }}
+                >
+                  <button
+                    className="w-full text-left px-4 py-3 text-sm font-medium text-red-500 hover:bg-red-50 cursor-pointer transition-colors flex items-center gap-2"
+                    onClick={() => { setMenuOpen(false); onSignOut(); }}
+                  >
+                    <span>🚪</span> Cerrar Sesión
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
-        {/* Saldo */}
-        <div className="glass-card rounded-3xl p-8 text-center animate-fade-in-up" style={{ animationDelay: "0.07s" }}>
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1">Saldo Acumulado</p>
-          <div className={`balance-display text-6xl sm:text-7xl font-black tracking-tight ${balanceAnim ? "animate-coin-bounce" : ""}`}>
-            {fmt(localBalance)}
+        {/* Saldo + Tienda */}
+        <div className="glass-card rounded-3xl p-6 animate-fade-in-up" style={{ animationDelay: "0.07s" }}>
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1">Saldo Acumulado</p>
+              <div className={`balance-display text-4xl sm:text-5xl font-black tracking-tight leading-none ${balanceAnim ? "animate-coin-bounce" : ""}`}>
+                {fmt(localBalance)}
+              </div>
+              <p className="mt-1 text-xs text-gray-400">Soles peruanos (S/.)</p>
+            </div>
+            <button
+              onClick={onOpenStore}
+              className="flex-shrink-0 flex flex-col items-center gap-1.5 py-3 px-5 rounded-2xl font-bold text-sm cursor-pointer transition-all active:scale-95"
+              style={{
+                background: "linear-gradient(135deg,#7c3aed,#6366f1)",
+                color: "white",
+                boxShadow: "0 4px 14px rgba(99,102,241,0.4)",
+              }}
+            >
+              <span className="text-2xl">🛍️</span>
+              <span>Tienda</span>
+            </button>
           </div>
-          <p className="mt-2 text-xs text-gray-400">Soles peruanos (S/.)</p>
         </div>
 
         {/* Mensaje */}
