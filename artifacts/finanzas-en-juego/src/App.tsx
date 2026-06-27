@@ -49,6 +49,7 @@ type Screen =
   | "avatar-select"
   | "game"
   | "store"
+  | "edit-profile"
   | "minigame"
   | "vagoneta"
   | "victory";
@@ -107,6 +108,28 @@ const CLOTHING_ITEMS: ClothingItem[] = [
   { id: "corona",           name: "Corona Dorada",       emoji: "👑", price: 12.0, slot: "head", desc: "Solo para reyes" },
   { id: "mochila",          name: "Mochila Escolar",     emoji: "🎒", price:  7.0, slot: "back", desc: "Siempre listo para aprender" },
 ];
+
+// ─── Opciones predefinidas de salones ────────────────────────────────────
+const GRADOS = ["1ro", "2do", "3ro", "4to", "5to"] as const;
+const SECCIONES = ["A", "B", "C", "D", "E"] as const;
+type Grado = (typeof GRADOS)[number];
+type Seccion = (typeof SECCIONES)[number];
+
+function buildAula(grado: Grado, seccion: Seccion) {
+  return `${grado}-${seccion}`;
+}
+
+function parseAula(aula: string): { grado: Grado | null; seccion: Seccion | null } {
+  const gradeNum = aula.charAt(0);
+  const gradeMap: Record<string, Grado> = {
+    "1": "1ro", "2": "2do", "3": "3ro", "4": "4to", "5": "5to",
+  };
+  const seccionMatch = aula.match(/[A-E]$/);
+  return {
+    grado: gradeMap[gradeNum] ?? null,
+    seccion: (seccionMatch?.[0] as Seccion) ?? null,
+  };
+}
 
 // ─── Posicionamiento de capas del avatar ─────────────────────────────────
 // Las coordenadas son fracciones del ancho (sz). El container tiene altura = sz * 1.3.
