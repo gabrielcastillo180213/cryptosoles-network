@@ -21,15 +21,15 @@ import {
 import { auth, googleProvider, db } from "./firebase";
 import "./index.css";
 
-// ─── Constantes ───────────────────────────────────────────────────────────
+// ─── Constantes de economía ───────────────────────────────────────────────
 const VAGONETA_SECONDS = 30;
 const VIP_COST = 50;
 const MANUAL_BASE = 2.0;
-const VAGONETA_NET_BASE = 0.80;   // Costo NPC: S/. 1.20 → ganancia neta S/. 0.80
+const VAGONETA_NET_BASE = 0.80;
 const VAGONETA_COSTO = 1.20;
-const VIP_MULTIPLIER = 1.10;      // +10% ganancia diaria para VIPs
+const VIP_MULTIPLIER = 1.10;
 
-// ─── Helpers de fecha (tiempo LOCAL del dispositivo, no UTC) ───────────────
+// ─── Helpers de fecha (hora LOCAL del dispositivo) ────────────────────────
 const localDateStr = (d: Date = new Date()) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const todayStr = () => localDateStr();
@@ -40,10 +40,13 @@ const yesterdayStr = () => {
 };
 
 // ─── Tipos ────────────────────────────────────────────────────────────────
+type AvatarType = "hombre" | "mujer";
+
 type Screen =
   | "loading"
   | "login"
   | "classroom"
+  | "avatar-select"
   | "game"
   | "store"
   | "minigame"
@@ -59,6 +62,16 @@ interface UserDoc {
   ultimaMision: string | null;
   isVIP: boolean;
   inventory: string[];
+  avatarType: AvatarType;
+}
+
+interface ClothingItem {
+  id: string;
+  name: string;
+  emoji: string;
+  price: number;
+  slot: "head" | "face" | "body" | "legs" | "back";
+  desc: string;
 }
 
 interface RankEntry {
@@ -66,6 +79,8 @@ interface RankEntry {
   saldo: number;
   racha: number;
   uid?: string;
+  isVIP?: boolean;
+  avatarType?: AvatarType;
 }
 
 interface RoomObject {
@@ -76,6 +91,113 @@ interface RoomObject {
   cleaned: boolean;
   rotation: number;
   scale: number;
+}
+
+// ─── Catálogo de ropa ─────────────────────────────────────────────────────
+// Precios balanceados: entre 1.5 y 8 días de ahorro con misión manual
+const CLOTHING_ITEMS: ClothingItem[] = [
+  { id: "gorra-sport",      name: "Gorra Sport",         emoji: "🧢", price:  3.0, slot: "head", desc: "Estilo urbano casual" },
+  { id: "gafas-sol",        name: "Gafas de Sol",        emoji: "🕶️", price:  4.0, slot: "face", desc: "Cool al 100%" },
+  { id: "camiseta-sport",   name: "Camiseta Deportiva",  emoji: "👕", price:  5.0, slot: "body", desc: "Comfy y deportivo" },
+  { id: "sombrero-vaquero", name: "Sombrero Vaquero",    emoji: "🤠", price:  5.0, slot: "head", desc: "¡Yeehaw!" },
+  { id: "pañuelo",          name: "Pañuelo al Cuello",   emoji: "🧣", price:  6.0, slot: "face", desc: "Elegante y abrigado" },
+  { id: "traje",            name: "Traje de Negocios",   emoji: "👔", price: 10.0, slot: "body", desc: "Futuro ejecutivo" },
+  { id: "birrete",          name: "Birrete Graduación",  emoji: "🎓", price:  8.0, slot: "head", desc: "El saber tiene estilo" },
+  { id: "capa-heroe",       name: "Capa de Héroe",       emoji: "🦸", price: 15.0, slot: "back", desc: "Ahorra como un héroe" },
+  { id: "corona",           name: "Corona Dorada",       emoji: "👑", price: 12.0, slot: "head", desc: "Solo para reyes" },
+  { id: "mochila",          name: "Mochila Escolar",     emoji: "🎒", price:  7.0, slot: "back", desc: "Siempre listo para aprender" },
+];
+
+// ─── Posicionamiento de capas del avatar ─────────────────────────────────
+// Las coordenadas son fracciones del ancho (sz). El container tiene altura = sz * 1.3.
+// El emoji base ocupa los últimos sz px desde abajo.
+const LAYER_POS: Record<string, { topFrac: number; leftFrac?: number; centered: boolean; sizeFrac: number; zIndex: number }> = {
+  head: { topFrac: 0.00, centered: true,  sizeFrac: 0.44, zIndex: 4 },
+  face: { topFrac: 0.32, centered: true,  sizeFrac: 0.36, zIndex: 3 },
+  body: { topFrac: 0.58, centered: true,  sizeFrac: 0.42, zIndex: 3 },
+  legs: { topFrac: 0.78, centered: true,  sizeFrac: 0.38, zIndex: 3 },
+  back: { topFrac: 0.48, leftFrac: 0.04,  centered: false, sizeFrac: 0.44, zIndex: 2 },
+};
+
+function getEquipped(inventory: string[]): Partial<Record<string, ClothingItem>> {
+  const equipped: Partial<Record<string, ClothingItem>> = {};
+  for (const id of inventory) {
+    const item = CLOTHING_ITEMS.find((i) => i.id === id);
+    if (item) equipped[item.slot] = item;
+  }
+  return equipped;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMPONENT: AvatarDisplay — avatar base + capas de ropa
+// ═══════════════════════════════════════════════════════════════════════════
+function AvatarDisplay({
+  avatarType,
+  inventory,
+  size = "md",
+}: {
+  avatarType: AvatarType;
+  inventory: string[];
+  size?: "sm" | "md" | "lg";
+}) {
+  const sz = size === "sm" ? 44 : size === "md" ? 72 : 108;
+  const containerH = Math.round(sz * 1.3);
+  const base = avatarType === "mujer" ? "👩" : "👦";
+  const equipped = getEquipped(inventory);
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: sz,
+        height: containerH,
+        display: "inline-block",
+        flexShrink: 0,
+      }}
+    >
+      {/* Base avatar */}
+      <span
+        style={{
+          position: "absolute",
+          bottom: 0,
+          left: "50%",
+          transform: "translateX(-50%)",
+          fontSize: sz,
+          lineHeight: 1,
+          userSelect: "none",
+          zIndex: 1,
+        }}
+      >
+        {base}
+      </span>
+
+      {/* Capas de ropa */}
+      {Object.entries(equipped).map(([slot, item]) => {
+        if (!item) return null;
+        const pos = LAYER_POS[slot];
+        const itemSz = Math.round(sz * pos.sizeFrac);
+        const style: React.CSSProperties = {
+          position: "absolute",
+          top: Math.round(sz * pos.topFrac),
+          fontSize: itemSz,
+          lineHeight: 1,
+          userSelect: "none",
+          zIndex: pos.zIndex,
+        };
+        if (pos.centered) {
+          style.left = "50%";
+          style.transform = "translateX(-50%)";
+        } else {
+          style.left = Math.round(sz * (pos.leftFrac ?? 0.05));
+        }
+        return (
+          <span key={slot} style={style}>
+            {item.emoji}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 // ─── Configuración de habitaciones ────────────────────────────────────────
@@ -138,7 +260,14 @@ async function fetchRanking(aula: string): Promise<RankEntry[]> {
     const snap = await getDocs(q);
     return snap.docs.map((d) => {
       const data = d.data() as UserDoc;
-      return { nombre: data.nombre, saldo: data.saldo, racha: data.racha, uid: d.id };
+      return {
+        nombre: data.nombre,
+        saldo: data.saldo,
+        racha: data.racha,
+        uid: d.id,
+        isVIP: data.isVIP,
+        avatarType: data.avatarType ?? "hombre",
+      };
     });
   } catch {
     return [];
@@ -247,9 +376,7 @@ function ClassroomScreen({
         <p className="mt-2 text-gray-500 text-sm">
           Hola, <strong>{user.displayName?.split(" ")[0]}</strong>. Ingresa el código de tu salón.
         </p>
-
         <div className="my-5 border-t border-gray-100" />
-
         <div className="space-y-4">
           <input
             type="text"
@@ -282,10 +409,61 @@ function ClassroomScreen({
             onClick={handleJoin}
             disabled={loading}
           >
-            {loading ? "⚙️ Guardando..." : "Unirse al Salón →"}
+            {loading ? "⚙️ Continuando..." : "Continuar →"}
           </button>
         </div>
         <p className="mt-6 text-xs text-gray-400">¿No tienes el código? Pídele a tu profesor.</p>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PANTALLA: Selección de Avatar
+// ═══════════════════════════════════════════════════════════════════════════
+function AvatarSelectScreen({
+  onSelect,
+  loading,
+}: {
+  onSelect: (type: AvatarType) => void;
+  loading: boolean;
+}) {
+  const [selected, setSelected] = useState<AvatarType | null>(null);
+
+  return (
+    <div className="screen-bg flex items-center justify-center p-4 min-h-screen">
+      <div className="glass-card rounded-3xl p-8 w-full max-w-md animate-pop-in text-center">
+        <div className="text-5xl mb-3">🎭</div>
+        <h2 className="text-2xl font-extrabold text-gray-900 mb-1">Elige tu Personaje</h2>
+        <p className="text-gray-500 text-sm mb-6">
+          Podrás personalizar su ropa en la Tienda con tus ahorros.
+        </p>
+
+        <div className="grid grid-cols-2 gap-4 mb-6">
+          {(["hombre", "mujer"] as AvatarType[]).map((tipo) => (
+            <button
+              key={tipo}
+              onClick={() => setSelected(tipo)}
+              className="cursor-pointer rounded-2xl p-4 border-2 transition-all flex flex-col items-center gap-3"
+              style={{
+                borderColor: selected === tipo ? "#6366f1" : "#e5e7eb",
+                background: selected === tipo ? "#eef2ff" : "#f9fafb",
+                transform: selected === tipo ? "scale(1.03)" : "scale(1)",
+              }}
+            >
+              <AvatarDisplay avatarType={tipo} inventory={[]} size="lg" />
+              <span className="font-bold text-gray-700 capitalize">{tipo === "hombre" ? "👦 Hombre" : "👩 Mujer"}</span>
+            </button>
+          ))}
+        </div>
+
+        <button
+          className="btn-primary w-full py-4 rounded-2xl font-bold text-base cursor-pointer disabled:opacity-50"
+          onClick={() => selected && onSelect(selected)}
+          disabled={!selected || loading}
+        >
+          {loading ? "⚙️ Creando perfil..." : "¡Empezar a ahorrar! →"}
+        </button>
       </div>
     </div>
   );
@@ -297,24 +475,14 @@ function ClassroomScreen({
 function RankingSection({ aula, currentUid }: { aula: string; currentUid?: string }) {
   const [ranking, setRanking] = useState<RankEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [indexError, setIndexError] = useState(false);
   const medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"];
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setIndexError(false);
     fetchRanking(aula)
-      .then((data) => {
-        if (!cancelled) {
-          setRanking(data);
-          setLoading(false);
-          if (data.length === 0) setIndexError(true);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) { setLoading(false); setIndexError(true); }
-      });
+      .then((data) => { if (!cancelled) { setRanking(data); setLoading(false); } })
+      .catch(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [aula]);
 
@@ -326,7 +494,7 @@ function RankingSection({ aula, currentUid }: { aula: string; currentUid?: strin
     );
   }
 
-  if (indexError || ranking.length === 0) {
+  if (ranking.length === 0) {
     return (
       <div className="glass-card rounded-3xl p-5">
         <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">🏆 Ranking del Salón</h3>
@@ -352,10 +520,18 @@ function RankingSection({ aula, currentUid }: { aula: string; currentUid?: strin
               className={`ranking-row ${i === 0 ? "ranking-row--gold" : i === 1 ? "ranking-row--silver" : i === 2 ? "ranking-row--bronze" : "ranking-row--default"} ${isMe ? "ranking-row--me" : ""}`}
             >
               <span className="ranking-pos">{medals[i]}</span>
-              <span className="ranking-name flex-1">
-                {entry.nombre.split(" ")[0]}
-                {isMe && <span className="ml-1 text-xs text-indigo-500 font-bold">(tú)</span>}
-              </span>
+              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                <AvatarDisplay
+                  avatarType={entry.avatarType ?? "hombre"}
+                  inventory={[]}
+                  size="sm"
+                />
+                <span className="ranking-name truncate">
+                  {entry.nombre.split(" ")[0]}
+                  {isMe && <span className="ml-1 text-xs text-indigo-500 font-bold">(tú)</span>}
+                  {entry.isVIP && <span className="ml-0.5">👑</span>}
+                </span>
+              </div>
               <span className="ranking-racha">🔥 {entry.racha}d</span>
               <span className="ranking-saldo">S/. {entry.saldo.toFixed(2)}</span>
             </div>
@@ -479,13 +655,13 @@ function MinigameScreen({ onComplete }: { onComplete: () => void }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PANTALLA: NPC Vagoneta — barra 30 segundos
+// PANTALLA: NPC Vagoneta
 // ═══════════════════════════════════════════════════════════════════════════
 function VagonetaScreen({ onComplete, isVIP }: { onComplete: () => void; isVIP: boolean }) {
   const [elapsed, setElapsed] = useState(0);
   const done = elapsed >= VAGONETA_SECONDS;
   const progress = Math.min((elapsed / VAGONETA_SECONDS) * 100, 100);
-  const netGain = isVIP ? VAGONETA_NET_BASE * VIP_MULTIPLIER : VAGONETA_NET_BASE;
+  const netGain = isVIP ? +(VAGONETA_NET_BASE * VIP_MULTIPLIER).toFixed(2) : VAGONETA_NET_BASE;
 
   useEffect(() => {
     if (done) return;
@@ -547,7 +723,7 @@ function VagonetaScreen({ onComplete, isVIP }: { onComplete: () => void; isVIP: 
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PANTALLA: Victoria (Misión Manual)
+// PANTALLA: Victoria
 // ═══════════════════════════════════════════════════════════════════════════
 function VictoryScreen({
   newBalance,
@@ -590,127 +766,250 @@ function VictoryScreen({
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PANTALLA: Tienda / VIP
+// PANTALLA: Tienda
 // ═══════════════════════════════════════════════════════════════════════════
 function StoreScreen({
   userDoc,
   onBuyVIP,
+  onBuyClothing,
+  onChangeAvatarType,
   onBack,
   buying,
+  buyingItem,
 }: {
   userDoc: UserDoc;
   onBuyVIP: () => void;
+  onBuyClothing: (item: ClothingItem) => void;
+  onChangeAvatarType: (type: AvatarType) => void;
   onBack: () => void;
   buying: boolean;
+  buyingItem: string | null;
 }) {
+  const [tab, setTab] = useState<"vip" | "ropa" | "perfil">("ropa");
   const canAffordVIP = userDoc.saldo >= VIP_COST;
+  const equipped = getEquipped(userDoc.inventory);
+
+  const SLOT_LABELS: Record<string, string> = {
+    head: "Cabeza",
+    face: "Cara",
+    body: "Cuerpo",
+    legs: "Piernas",
+    back: "Espalda",
+  };
 
   return (
     <div className="screen-bg min-h-screen p-4 pb-12">
       <div className="max-w-xl mx-auto space-y-4 pt-6">
 
         {/* Header */}
-        <div className="glass-card rounded-3xl p-5 animate-fade-in-up flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-purple-500 uppercase tracking-wider">Economía</p>
-            <h2 className="text-xl font-extrabold text-gray-900">🛍️ Tienda</h2>
+        <div className="glass-card rounded-3xl p-5 animate-fade-in-up flex items-center gap-4">
+          <AvatarDisplay avatarType={userDoc.avatarType} inventory={userDoc.inventory} size="md" />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-purple-500 uppercase tracking-wider">Tu Tienda</p>
+            <h2 className="text-xl font-extrabold text-gray-900">🛍️ Personalización</h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              Saldo disponible: <strong>S/. {userDoc.saldo.toFixed(2)}</strong>
+              Saldo: <strong>S/. {userDoc.saldo.toFixed(2)}</strong>
+              {userDoc.isVIP && <span className="ml-2 text-yellow-600 font-bold">👑 VIP</span>}
             </p>
           </div>
           <button
-            className="text-sm text-gray-400 hover:text-indigo-500 cursor-pointer transition-colors font-medium"
+            className="text-sm text-gray-400 hover:text-indigo-500 cursor-pointer transition-colors font-medium self-start"
             onClick={onBack}
           >
             ← Volver
           </button>
         </div>
 
-        {/* Estado VIP */}
-        {userDoc.isVIP ? (
-          <div className="glass-card rounded-3xl p-6 animate-fade-in-up text-center" style={{ animationDelay: "0.06s", background: "linear-gradient(135deg,#fef9c3,#fef3c7)" }}>
-            <div className="text-5xl mb-3">👑</div>
-            <h3 className="text-xl font-extrabold text-yellow-700 mb-1">¡Eres VIP!</h3>
-            <p className="text-yellow-600 text-sm leading-relaxed">
-              Tus ganancias diarias tienen un <strong>+10% de bonus</strong> aplicado automáticamente.
-            </p>
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              <div className="rounded-xl p-2 text-center bg-white/60 border border-yellow-200">
-                <p className="text-xs text-yellow-600 font-semibold">Misión Manual</p>
-                <p className="text-lg font-extrabold text-yellow-700">S/. {(MANUAL_BASE * VIP_MULTIPLIER).toFixed(2)}</p>
-                <p className="text-xs text-yellow-500">+10% VIP</p>
-              </div>
-              <div className="rounded-xl p-2 text-center bg-white/60 border border-yellow-200">
-                <p className="text-xs text-yellow-600 font-semibold">NPC Vagoneta</p>
-                <p className="text-lg font-extrabold text-yellow-700">S/. {(VAGONETA_NET_BASE * VIP_MULTIPLIER).toFixed(2)}</p>
-                <p className="text-xs text-yellow-500">+10% VIP</p>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="glass-card rounded-3xl p-6 animate-fade-in-up" style={{ animationDelay: "0.06s" }}>
-            <div className="text-center mb-4">
-              <div className="text-5xl mb-3">👑</div>
-              <h3 className="text-xl font-extrabold text-gray-900 mb-1">Membresía VIP</h3>
-              <p className="text-gray-500 text-sm leading-relaxed">
-                Activa tu membresía VIP y gana <strong>+10% más</strong> en cada misión diaria, para siempre.
-              </p>
-            </div>
-
-            <div className="rounded-2xl p-4 bg-gray-50 border border-gray-200 mb-4 space-y-2">
-              <div className="flex items-center gap-2 text-sm text-gray-600">
-                <span>✅</span>
-                <span>Misión Manual: <strong>S/. {(MANUAL_BASE * VIP_MULTIPLIER).toFixed(2)}</strong> en vez de S/. {MANUAL_BASE.toFixed(2)}</span>
-              </div>
-              <div className="flex items-center gap-2 text-sm text-gray-600">
-                <span>✅</span>
-                <span>NPC Vagoneta: <strong>S/. {(VAGONETA_NET_BASE * VIP_MULTIPLIER).toFixed(2)}</strong> en vez de S/. {VAGONETA_NET_BASE.toFixed(2)}</span>
-              </div>
-              <div className="flex items-center gap-2 text-sm text-gray-600">
-                <span>✅</span>
-                <span>Badge exclusivo <strong>👑</strong> en el ranking</span>
-              </div>
-            </div>
-
-            <div className="text-center mb-4">
-              <p className="text-3xl font-black text-gray-900">S/. {VIP_COST.toFixed(2)}</p>
-              <p className="text-xs text-gray-400">pago único en soles ficticios</p>
-            </div>
-
-            {!canAffordVIP && (
-              <div className="mb-3 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm text-center">
-                ⚠️ Necesitas S/. {(VIP_COST - userDoc.saldo).toFixed(2)} más para activar el VIP.
-              </div>
-            )}
-
+        {/* Tabs */}
+        <div className="glass-card rounded-2xl p-1.5 flex gap-1 animate-fade-in-up" style={{ animationDelay: "0.04s" }}>
+          {(["ropa", "vip", "perfil"] as const).map((t) => (
             <button
-              className="btn-primary w-full py-4 rounded-2xl font-bold text-base cursor-pointer disabled:opacity-50"
-              onClick={onBuyVIP}
-              disabled={!canAffordVIP || buying}
+              key={t}
+              onClick={() => setTab(t)}
+              className="flex-1 py-2.5 rounded-xl font-bold text-sm transition-all cursor-pointer"
+              style={{
+                background: tab === t ? "#6366f1" : "transparent",
+                color: tab === t ? "white" : "#6b7280",
+              }}
             >
-              {buying ? "⚙️ Activando..." : `👑 Activar VIP por S/. ${VIP_COST.toFixed(2)}`}
+              {t === "ropa" ? "🎒 Ropa" : t === "vip" ? "👑 VIP" : "🎭 Perfil"}
             </button>
+          ))}
+        </div>
+
+        {/* Tab: Ropa */}
+        {tab === "ropa" && (
+          <div className="space-y-3 animate-fade-in-up" style={{ animationDelay: "0.06s" }}>
+            {/* Preview del avatar con ropa actual */}
+            <div className="glass-card rounded-3xl p-5 text-center">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Tu personaje actual</p>
+              <div className="flex justify-center mb-3">
+                <AvatarDisplay avatarType={userDoc.avatarType} inventory={userDoc.inventory} size="lg" />
+              </div>
+              {Object.keys(equipped).length === 0 && (
+                <p className="text-xs text-gray-400">Aún no tienes ropa. ¡Ahorra y equípate!</p>
+              )}
+              {Object.keys(equipped).length > 0 && (
+                <div className="flex flex-wrap gap-1 justify-center mt-2">
+                  {Object.entries(equipped).map(([slot, item]) => item && (
+                    <span key={slot} className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full text-xs font-medium border border-indigo-100">
+                      {item.emoji} {SLOT_LABELS[slot]}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Lista de ropa por slot */}
+            {(["head", "face", "body", "back"] as const).map((slot) => {
+              const slotItems = CLOTHING_ITEMS.filter((i) => i.slot === slot);
+              return (
+                <div key={slot} className="glass-card rounded-2xl p-4">
+                  <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">
+                    {SLOT_LABELS[slot]}
+                  </h4>
+                  <div className="space-y-2">
+                    {slotItems.map((item) => {
+                      const owned = userDoc.inventory.includes(item.id);
+                      const isEquipped = equipped[slot]?.id === item.id;
+                      const canAfford = userDoc.saldo >= item.price;
+                      const isBuying = buyingItem === item.id;
+                      return (
+                        <div
+                          key={item.id}
+                          className="flex items-center gap-3 rounded-xl p-3 transition-all"
+                          style={{
+                            background: isEquipped ? "#eef2ff" : "#f9fafb",
+                            border: isEquipped ? "1.5px solid #c7d2fe" : "1.5px solid #f3f4f6",
+                          }}
+                        >
+                          <span className="text-3xl">{item.emoji}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-sm text-gray-800">{item.name}</p>
+                            <p className="text-xs text-gray-400">{item.desc}</p>
+                          </div>
+                          <div className="text-right">
+                            {owned ? (
+                              <span className="px-2 py-1 rounded-lg text-xs font-bold bg-green-50 text-green-600 border border-green-100">
+                                {isEquipped ? "✅ Equipado" : "✓ Tienes"}
+                              </span>
+                            ) : (
+                              <button
+                                className="px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50 transition-all"
+                                style={{
+                                  background: canAfford ? "#6366f1" : "#e5e7eb",
+                                  color: canAfford ? "white" : "#9ca3af",
+                                }}
+                                onClick={() => onBuyClothing(item)}
+                                disabled={!canAfford || isBuying}
+                              >
+                                {isBuying ? "⚙️" : `S/. ${item.price.toFixed(2)}`}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 
-        {/* Inventario */}
-        <div className="glass-card rounded-3xl p-6 animate-fade-in-up" style={{ animationDelay: "0.12s" }}>
-          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">🎒 Inventario</h3>
-          {userDoc.inventory.length === 0 ? (
-            <div className="text-center py-4">
-              <p className="text-gray-400 text-sm">Tu inventario está vacío.</p>
-              <p className="text-gray-300 text-xs mt-1">Próximamente: ropa, avatares y más.</p>
-            </div>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {userDoc.inventory.map((item, i) => (
-                <span key={i} className="px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full text-sm font-medium border border-indigo-100">
-                  {item}
-                </span>
+        {/* Tab: VIP */}
+        {tab === "vip" && (
+          <div className="animate-fade-in-up" style={{ animationDelay: "0.06s" }}>
+            {userDoc.isVIP ? (
+              <div className="glass-card rounded-3xl p-6 text-center" style={{ background: "linear-gradient(135deg,#fef9c3,#fef3c7)" }}>
+                <div className="text-5xl mb-3">👑</div>
+                <h3 className="text-xl font-extrabold text-yellow-700 mb-1">¡Eres VIP!</h3>
+                <p className="text-yellow-600 text-sm leading-relaxed mb-4">
+                  Tus ganancias diarias tienen un <strong>+10% de bonus</strong> aplicado automáticamente.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-xl p-2 text-center bg-white/60 border border-yellow-200">
+                    <p className="text-xs text-yellow-600 font-semibold">Misión Manual</p>
+                    <p className="text-lg font-extrabold text-yellow-700">S/. {(MANUAL_BASE * VIP_MULTIPLIER).toFixed(2)}</p>
+                  </div>
+                  <div className="rounded-xl p-2 text-center bg-white/60 border border-yellow-200">
+                    <p className="text-xs text-yellow-600 font-semibold">NPC Vagoneta</p>
+                    <p className="text-lg font-extrabold text-yellow-700">S/. {(VAGONETA_NET_BASE * VIP_MULTIPLIER).toFixed(2)}</p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="glass-card rounded-3xl p-6">
+                <div className="text-center mb-4">
+                  <div className="text-5xl mb-3">👑</div>
+                  <h3 className="text-xl font-extrabold text-gray-900 mb-1">Membresía VIP</h3>
+                  <p className="text-gray-500 text-sm leading-relaxed">
+                    Activa tu membresía VIP y gana <strong>+10% más</strong> en cada misión diaria, para siempre.
+                  </p>
+                </div>
+                <div className="rounded-2xl p-4 bg-gray-50 border border-gray-200 mb-4 space-y-2">
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <span>✅</span>
+                    <span>Misión Manual: <strong>S/. {(MANUAL_BASE * VIP_MULTIPLIER).toFixed(2)}</strong> en vez de S/. {MANUAL_BASE.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <span>✅</span>
+                    <span>NPC Vagoneta: <strong>S/. {(VAGONETA_NET_BASE * VIP_MULTIPLIER).toFixed(2)}</strong> en vez de S/. {VAGONETA_NET_BASE.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <span>✅</span>
+                    <span>Badge exclusivo <strong>👑</strong> en el ranking</span>
+                  </div>
+                </div>
+                <div className="text-center mb-4">
+                  <p className="text-3xl font-black text-gray-900">S/. {VIP_COST.toFixed(2)}</p>
+                  <p className="text-xs text-gray-400">pago único en soles ficticios</p>
+                </div>
+                {!canAffordVIP && (
+                  <div className="mb-3 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm text-center">
+                    ⚠️ Necesitas S/. {(VIP_COST - userDoc.saldo).toFixed(2)} más.
+                  </div>
+                )}
+                <button
+                  className="btn-primary w-full py-4 rounded-2xl font-bold text-base cursor-pointer disabled:opacity-50"
+                  onClick={onBuyVIP}
+                  disabled={!canAffordVIP || buying}
+                >
+                  {buying ? "⚙️ Activando..." : `👑 Activar VIP por S/. ${VIP_COST.toFixed(2)}`}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab: Perfil */}
+        {tab === "perfil" && (
+          <div className="glass-card rounded-3xl p-6 animate-fade-in-up" style={{ animationDelay: "0.06s" }}>
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">🎭 Cambiar Personaje Base</h3>
+            <div className="grid grid-cols-2 gap-4">
+              {(["hombre", "mujer"] as AvatarType[]).map((tipo) => (
+                <button
+                  key={tipo}
+                  onClick={() => onChangeAvatarType(tipo)}
+                  className="cursor-pointer rounded-2xl p-4 border-2 transition-all flex flex-col items-center gap-3"
+                  style={{
+                    borderColor: userDoc.avatarType === tipo ? "#6366f1" : "#e5e7eb",
+                    background: userDoc.avatarType === tipo ? "#eef2ff" : "#f9fafb",
+                  }}
+                >
+                  <AvatarDisplay avatarType={tipo} inventory={userDoc.inventory} size="md" />
+                  <span className="font-bold text-gray-700 text-sm">
+                    {tipo === "hombre" ? "👦 Hombre" : "👩 Mujer"}
+                    {userDoc.avatarType === tipo && <span className="ml-1 text-indigo-500">✓</span>}
+                  </span>
+                </button>
               ))}
             </div>
-          )}
-        </div>
+            <p className="text-xs text-gray-400 text-center mt-3">
+              Tu ropa se mantiene al cambiar el personaje base.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -759,8 +1058,8 @@ function GameScreen({
     setTimeout(() => setBalanceAnim(false), 700);
   };
 
-  const manualGain = isVIP ? MANUAL_BASE * VIP_MULTIPLIER : MANUAL_BASE;
-  const vagonetaGain = isVIP ? VAGONETA_NET_BASE * VIP_MULTIPLIER : VAGONETA_NET_BASE;
+  const manualGain = isVIP ? +(MANUAL_BASE * VIP_MULTIPLIER).toFixed(2) : MANUAL_BASE;
+  const vagonetaGain = isVIP ? +(VAGONETA_NET_BASE * VIP_MULTIPLIER).toFixed(2) : VAGONETA_NET_BASE;
 
   useEffect(() => {
     type RewardFn = (amount: number, tipo: "manual" | "vagoneta") => void;
@@ -788,33 +1087,40 @@ function GameScreen({
       <div className="max-w-xl mx-auto space-y-4 pt-6">
 
         {/* Header */}
-        <div className="glass-card rounded-3xl p-5 animate-fade-in-up flex items-center justify-between">
-          <div>
+        <div className="glass-card rounded-3xl p-4 animate-fade-in-up flex items-center gap-3">
+          {/* Avatar personalizado */}
+          <div className="flex-shrink-0">
+            <AvatarDisplay
+              avatarType={userDoc.avatarType}
+              inventory={userDoc.inventory}
+              size="sm"
+            />
+          </div>
+
+          <div className="flex-1 min-w-0">
             <p className="text-xs font-semibold text-indigo-500 uppercase tracking-wider">Jugador</p>
-            <h2 className="text-xl font-extrabold text-gray-900">{user.displayName ?? "Estudiante"}</h2>
-            <div className="flex items-center gap-2 mt-1 flex-wrap">
-              <span className="px-2.5 py-0.5 bg-indigo-50 text-indigo-700 text-xs font-bold rounded-full border border-indigo-100">
+            <h2 className="text-lg font-extrabold text-gray-900 truncate">{user.displayName ?? "Estudiante"}</h2>
+            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+              <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 text-xs font-bold rounded-full border border-indigo-100">
                 {userDoc.aula}
               </span>
-              <span className="px-2.5 py-0.5 bg-orange-50 text-orange-700 text-xs font-bold rounded-full border border-orange-100">
-                🔥 {displayRacha} día{displayRacha !== 1 ? "s" : ""}
+              <span className="px-2 py-0.5 bg-orange-50 text-orange-700 text-xs font-bold rounded-full border border-orange-100">
+                🔥 {displayRacha}d
               </span>
               {isVIP && (
-                <span className="px-2.5 py-0.5 bg-yellow-50 text-yellow-700 text-xs font-bold rounded-full border border-yellow-200">
+                <span className="px-2 py-0.5 bg-yellow-50 text-yellow-700 text-xs font-bold rounded-full border border-yellow-200">
                   👑 VIP
                 </span>
               )}
               {locked && (
-                <span className="px-2.5 py-0.5 bg-green-50 text-green-700 text-xs font-bold rounded-full border border-green-100">
-                  ✅ Misión hoy
+                <span className="px-2 py-0.5 bg-green-50 text-green-700 text-xs font-bold rounded-full border border-green-100">
+                  ✅ Hoy
                 </span>
               )}
             </div>
           </div>
+
           <div className="flex flex-col items-center gap-1.5">
-            {user.photoURL && (
-              <img src={user.photoURL} alt="avatar" className="w-11 h-11 rounded-full border-2 border-indigo-200" />
-            )}
             <button
               className="text-xs text-purple-500 hover:text-purple-700 cursor-pointer font-semibold transition-colors"
               onClick={onOpenStore}
@@ -947,6 +1253,9 @@ export default function App() {
   const [victoryData, setVictoryData] = useState({ newBalance: 0, newRacha: 1, earned: 0 });
   const [isVIP, setIsVIP] = useState(false);
   const [buyingVIP, setBuyingVIP] = useState(false);
+  const [buyingItem, setBuyingItem] = useState<string | null>(null);
+  // Almacena el código de aula entre ClassroomScreen y AvatarSelectScreen
+  const [pendingAulaCode, setPendingAulaCode] = useState<string | null>(null);
 
   // ── Observador de Auth ───────────────────────────────────────────────────
   useEffect(() => {
@@ -975,16 +1284,22 @@ export default function App() {
         setScreen("classroom");
         return;
       }
-      const data = snap.data() as UserDoc;
-      // Compatibilidad con docs antiguos sin isVIP/inventory
-      const normalized: UserDoc = {
-        ...data,
-        isVIP: data.isVIP ?? false,
-        inventory: data.inventory ?? [],
+      const raw = snap.data() as Partial<UserDoc>;
+      // Normalizar campos nuevos para usuarios existentes
+      const data: UserDoc = {
+        nombre: raw.nombre ?? u.displayName ?? "Estudiante",
+        correo: raw.correo ?? u.email ?? "",
+        aula: raw.aula ?? "",
+        saldo: raw.saldo ?? 0,
+        racha: raw.racha ?? 0,
+        ultimaMision: raw.ultimaMision ?? null,
+        isVIP: raw.isVIP ?? false,
+        inventory: raw.inventory ?? [],
+        avatarType: raw.avatarType ?? "hombre",
       };
-      setUserDoc(normalized);
-      setIsVIP(normalized.isVIP);
-      applyStreak(normalized);
+      setUserDoc(data);
+      setIsVIP(data.isVIP);
+      applyStreak(data);
       setScreen("game");
     } catch (e) {
       console.error("Error cargando usuario:", e);
@@ -993,7 +1308,6 @@ export default function App() {
     }
   };
 
-  // ── Calcular racha y bloqueo diario ─────────────────────────────────────
   const applyStreak = (data: UserDoc) => {
     const today = todayStr();
     const yesterday = yesterdayStr();
@@ -1029,20 +1343,27 @@ export default function App() {
     }
   };
 
-  // ── Registrar en Firestore al unirse al aula ─────────────────────────────
-  const handleJoin = async (code: string) => {
-    if (!firebaseUser) return;
+  // ── Paso 1 de registro: guardar código de aula, ir a seleccionar avatar ──
+  const handleJoin = (code: string) => {
+    setPendingAulaCode(code);
+    setScreen("avatar-select");
+  };
+
+  // ── Paso 2 de registro: crear doc completo en Firestore con avatarType ───
+  const handleAvatarSelect = async (avatarType: AvatarType) => {
+    if (!firebaseUser || !pendingAulaCode) return;
     setSaveLoading(true);
     try {
       const newDoc: UserDoc = {
         nombre: firebaseUser.displayName ?? "Estudiante",
         correo: firebaseUser.email ?? "",
-        aula: code,
+        aula: pendingAulaCode,
         saldo: 0,
         racha: 0,
         ultimaMision: null,
         isVIP: false,
         inventory: [],
+        avatarType,
       };
       await setDoc(doc(db!, "usuarios", firebaseUser.uid), {
         ...newDoc,
@@ -1052,9 +1373,10 @@ export default function App() {
       setIsVIP(false);
       setDisplayRacha(1);
       setMissionDoneToday(false);
+      setPendingAulaCode(null);
       setScreen("game");
     } catch (e) {
-      console.error("Error al guardar aula:", e);
+      console.error("Error al guardar perfil:", e);
       setAuthError("Error al guardar en Firestore. Verifica las reglas de seguridad.");
     } finally {
       setSaveLoading(false);
@@ -1115,16 +1437,45 @@ export default function App() {
     setBuyingVIP(true);
     try {
       const newBal = +(userDoc.saldo - VIP_COST).toFixed(2);
-      await updateDoc(doc(db!, "usuarios", firebaseUser.uid), {
-        saldo: newBal,
-        isVIP: true,
-      });
+      await updateDoc(doc(db!, "usuarios", firebaseUser.uid), { saldo: newBal, isVIP: true });
       setUserDoc((prev) => prev ? { ...prev, saldo: newBal, isVIP: true } : prev);
       setIsVIP(true);
     } catch (e) {
       console.error("Error comprando VIP:", e);
     } finally {
       setBuyingVIP(false);
+    }
+  };
+
+  // ── Comprar ropa ─────────────────────────────────────────────────────────
+  const handleBuyClothing = async (item: ClothingItem) => {
+    if (!firebaseUser || !userDoc) return;
+    if (userDoc.inventory.includes(item.id)) return;
+    if (userDoc.saldo < item.price) return;
+    setBuyingItem(item.id);
+    try {
+      const newBal = +(userDoc.saldo - item.price).toFixed(2);
+      const newInventory = [...userDoc.inventory, item.id];
+      await updateDoc(doc(db!, "usuarios", firebaseUser.uid), {
+        saldo: newBal,
+        inventory: newInventory,
+      });
+      setUserDoc((prev) => prev ? { ...prev, saldo: newBal, inventory: newInventory } : prev);
+    } catch (e) {
+      console.error("Error comprando ropa:", e);
+    } finally {
+      setBuyingItem(null);
+    }
+  };
+
+  // ── Cambiar tipo de avatar ────────────────────────────────────────────────
+  const handleChangeAvatarType = async (newType: AvatarType) => {
+    if (!firebaseUser || !userDoc || userDoc.avatarType === newType) return;
+    try {
+      await updateDoc(doc(db!, "usuarios", firebaseUser.uid), { avatarType: newType });
+      setUserDoc((prev) => prev ? { ...prev, avatarType: newType } : prev);
+    } catch (e) {
+      console.error("Error cambiando avatar:", e);
     }
   };
 
@@ -1136,6 +1487,7 @@ export default function App() {
     setMissionDoneToday(false);
     setDisplayRacha(1);
     setIsVIP(false);
+    setPendingAulaCode(null);
     setVictoryData({ newBalance: 0, newRacha: 1, earned: 0 });
     setAuthError(null);
     setScreen("login");
@@ -1148,7 +1500,10 @@ export default function App() {
     return <LoginScreen onLogin={handleLogin} loading={authLoading} error={authError} />;
 
   if (screen === "classroom" && firebaseUser)
-    return <ClassroomScreen user={firebaseUser} onJoin={handleJoin} loading={saveLoading} />;
+    return <ClassroomScreen user={firebaseUser} onJoin={handleJoin} loading={false} />;
+
+  if (screen === "avatar-select")
+    return <AvatarSelectScreen onSelect={handleAvatarSelect} loading={saveLoading} />;
 
   if (screen === "minigame")
     return <MinigameScreen onComplete={handleMinigameComplete} />;
@@ -1171,8 +1526,11 @@ export default function App() {
       <StoreScreen
         userDoc={userDoc}
         onBuyVIP={handleBuyVIP}
+        onBuyClothing={handleBuyClothing}
+        onChangeAvatarType={handleChangeAvatarType}
         onBack={() => setScreen("game")}
         buying={buyingVIP}
+        buyingItem={buyingItem}
       />
     );
 
