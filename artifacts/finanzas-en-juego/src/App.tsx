@@ -17,6 +17,7 @@ import {
   limit,
   getDocs,
   serverTimestamp,
+  onSnapshot,
 } from "firebase/firestore";
 import { auth, googleProvider, db } from "./firebase";
 import "./index.css";
@@ -64,6 +65,7 @@ interface UserDoc {
   isVIP: boolean;
   inventory: string[];
   avatarType: AvatarType;
+  accessoryStyles: Record<string, AccessoryStyle>;
 }
 
 interface ClothingItem {
@@ -73,6 +75,15 @@ interface ClothingItem {
   price: number;
   slot: "head" | "face" | "body" | "legs" | "back";
   desc: string;
+  imageSrc?: string;
+}
+
+interface AccessoryStyle {
+  scale: number;
+  rotation: number;
+  // x/y stored as percentage relative to accessory size (e.g. -20 means -20%)
+  x: number; // percent
+  y: number; // percent
 }
 
 interface RankEntry {
@@ -82,6 +93,8 @@ interface RankEntry {
   uid?: string;
   isVIP?: boolean;
   avatarType?: AvatarType;
+  inventory?: string[];
+  accessoryStyles?: Record<string, AccessoryStyle>;
 }
 
 interface RoomObject {
@@ -99,14 +112,10 @@ interface RoomObject {
 const CLOTHING_ITEMS: ClothingItem[] = [
   { id: "gorra-sport",      name: "Gorra Sport",         emoji: "🧢", price:  3.0, slot: "head", desc: "Estilo urbano casual" },
   { id: "gafas-sol",        name: "Gafas de Sol",        emoji: "🕶️", price:  4.0, slot: "face", desc: "Cool al 100%" },
-  { id: "camiseta-sport",   name: "Camiseta Deportiva",  emoji: "👕", price:  5.0, slot: "body", desc: "Comfy y deportivo" },
+  { id: "audifonos",        name: "Audífonos",           emoji: "🎧", price:  4.5, slot: "head", desc: "Modo foco total" },
   { id: "sombrero-vaquero", name: "Sombrero Vaquero",    emoji: "🤠", price:  5.0, slot: "head", desc: "¡Yeehaw!" },
-  { id: "pañuelo",          name: "Pañuelo al Cuello",   emoji: "🧣", price:  6.0, slot: "face", desc: "Elegante y abrigado" },
-  { id: "traje",            name: "Traje de Negocios",   emoji: "👔", price: 10.0, slot: "body", desc: "Futuro ejecutivo" },
-  { id: "birrete",          name: "Birrete Graduación",  emoji: "🎓", price:  8.0, slot: "head", desc: "El saber tiene estilo" },
-  { id: "capa-heroe",       name: "Capa de Héroe",       emoji: "🦸", price: 15.0, slot: "back", desc: "Ahorra como un héroe" },
   { id: "corona",           name: "Corona Dorada",       emoji: "👑", price: 12.0, slot: "head", desc: "Solo para reyes" },
-  { id: "mochila",          name: "Mochila Escolar",     emoji: "🎒", price:  7.0, slot: "back", desc: "Siempre listo para aprender" },
+  { id: "sombrero-clasico", name: "Sombrero Clásico",    emoji: "🎩", price:  6.0, slot: "head", desc: "Elegancia sencilla" },
 ];
 
 // ─── Opciones predefinidas de salones ────────────────────────────────────
@@ -154,19 +163,31 @@ function getEquipped(inventory: string[]): Partial<Record<string, ClothingItem>>
 // ═══════════════════════════════════════════════════════════════════════════
 // COMPONENT: AvatarDisplay — avatar base + capas de ropa
 // ═══════════════════════════════════════════════════════════════════════════
+const DEFAULT_ACCESSORY_STYLE: AccessoryStyle = {
+  scale: 1,
+  rotation: 0,
+  x: 0,
+  y: 0,
+};
+
 function AvatarDisplay({
   avatarType,
   inventory,
   size = "md",
+  accessoryStyles = {},
+  guideAccessoryId,
 }: {
   avatarType: AvatarType;
   inventory: string[];
   size?: "sm" | "md" | "lg";
+  accessoryStyles?: Record<string, AccessoryStyle>;
+  guideAccessoryId?: string | null;
 }) {
   const sz = size === "sm" ? 44 : size === "md" ? 72 : 108;
   const containerH = Math.round(sz * 1.3);
   const base = avatarType === "mujer" ? "👩" : "👦";
   const equipped = getEquipped(inventory);
+  const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
 
   return (
     <div
@@ -199,6 +220,13 @@ function AvatarDisplay({
         if (!item) return null;
         const pos = LAYER_POS[slot];
         const itemSz = Math.round(sz * pos.sizeFrac);
+            const styleValue = accessoryStyles[item.id] ?? DEFAULT_ACCESSORY_STYLE;
+            const transformBase = pos.centered ? "translateX(-50%)" : "translate(0px, 0px)";
+            // styleValue.x/y are stored as percentages. Apply them directly so
+            // positioning is resolution-independent.
+            const xPercent = styleValue.x;
+            const yPercent = styleValue.y;
+            const transform = `${transformBase} translate(${xPercent}%, ${yPercent}%) rotate(${styleValue.rotation}deg) scale(${styleValue.scale})`;
         const style: React.CSSProperties = {
           position: "absolute",
           top: Math.round(sz * pos.topFrac),
@@ -206,16 +234,50 @@ function AvatarDisplay({
           lineHeight: 1,
           userSelect: "none",
           zIndex: pos.zIndex,
+          transform,
+          transformOrigin: "center center",
         };
         if (pos.centered) {
           style.left = "50%";
-          style.transform = "translateX(-50%)";
         } else {
           style.left = Math.round(sz * (pos.leftFrac ?? 0.05));
         }
+        const accessoryImageSrc = item.imageSrc ?? `/accessories/${item.id}.png`;
+        const imageFailed = Boolean(failedImages[item.id]);
         return (
           <span key={slot} style={style}>
-            {item.emoji}
+            {!imageFailed && accessoryImageSrc ? (
+              <img
+                src={accessoryImageSrc}
+                alt={item.name}
+                onError={() => setFailedImages((prev) => ({ ...prev, [item.id]: true }))}
+                style={{
+                  width: itemSz,
+                  height: "auto",
+                  display: "block",
+                  objectFit: "contain",
+                  pointerEvents: "none",
+                }}
+              />
+            ) : (
+              <span>{item.emoji}</span>
+            )}
+            {guideAccessoryId === item.id && (
+              <span
+                style={{
+                  position: "absolute",
+                  left: "50%",
+                  top: "50%",
+                  transform: "translate(-50%, -50%)",
+                  width: Math.max(6, Math.round(itemSz * 0.12)),
+                  height: Math.max(6, Math.round(itemSz * 0.12)),
+                  background: "rgba(99,102,241,0.9)",
+                  border: "2px solid white",
+                  borderRadius: "999px",
+                  pointerEvents: "none",
+                }}
+              />
+            )}
           </span>
         );
       })}
@@ -282,14 +344,16 @@ async function fetchRanking(aula: string): Promise<RankEntry[]> {
     );
     const snap = await getDocs(q);
     return snap.docs.map((d) => {
-      const data = d.data() as UserDoc;
+      const data = d.data() as Partial<UserDoc>;
       return {
-        nombre: data.nombre,
-        saldo: data.saldo,
-        racha: data.racha,
+        nombre: data.nombre ?? "Estudiante",
+        saldo: data.saldo ?? 0,
+        racha: data.racha ?? 0,
         uid: d.id,
-        isVIP: data.isVIP,
+        isVIP: data.isVIP ?? false,
         avatarType: data.avatarType ?? "hombre",
+        inventory: data.inventory ?? [],
+        accessoryStyles: (data.accessoryStyles as Record<string, AccessoryStyle> | undefined) ?? {},
       };
     });
   } catch {
@@ -501,12 +565,37 @@ function RankingSection({ aula, currentUid }: { aula: string; currentUid?: strin
   const medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"];
 
   useEffect(() => {
-    let cancelled = false;
+    if (!db) return;
     setLoading(true);
-    fetchRanking(aula)
-      .then((data) => { if (!cancelled) { setRanking(data); setLoading(false); } })
-      .catch(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+    const q = query(
+      collection(db, "usuarios"),
+      where("aula", "==", aula),
+      orderBy("saldo", "desc"),
+      limit(5)
+    );
+
+    const unsubscribe = onSnapshot(q, (snap) => {
+      const data = snap.docs.map((d) => {
+        const userData = d.data() as Partial<UserDoc>;
+        return {
+          nombre: userData.nombre ?? "Estudiante",
+          saldo: userData.saldo ?? 0,
+          racha: userData.racha ?? 0,
+          uid: d.id,
+          isVIP: userData.isVIP ?? false,
+          avatarType: userData.avatarType ?? "hombre",
+          inventory: userData.inventory ?? [],
+          accessoryStyles: (userData.accessoryStyles as Record<string, AccessoryStyle> | undefined) ?? {},
+        } satisfies RankEntry;
+      });
+      setRanking(data);
+      setLoading(false);
+    }, () => {
+      setRanking([]);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
   }, [aula]);
 
   if (loading) {
@@ -546,8 +635,9 @@ function RankingSection({ aula, currentUid }: { aula: string; currentUid?: strin
               <div className="flex items-center gap-1.5 flex-1 min-w-0">
                 <AvatarDisplay
                   avatarType={entry.avatarType ?? "hombre"}
-                  inventory={[]}
+                  inventory={entry.inventory ?? []}
                   size="sm"
+                  accessoryStyles={entry.accessoryStyles ?? {}}
                 />
                 <span className="ranking-name truncate">
                   {entry.nombre.split(" ")[0]}
@@ -799,6 +889,7 @@ function StoreScreen({
   onBack,
   buying,
   buyingItem,
+  onUpdateAccessoryStyles,
 }: {
   userDoc: UserDoc;
   onBuyVIP: () => void;
@@ -807,10 +898,43 @@ function StoreScreen({
   onBack: () => void;
   buying: boolean;
   buyingItem: string | null;
+  onUpdateAccessoryStyles: (styles: Record<string, AccessoryStyle>) => Promise<void> | void;
 }) {
   const [tab, setTab] = useState<"vip" | "ropa" | "perfil">("ropa");
+  const [activeAccessoryId, setActiveAccessoryId] = useState<string | null>(null);
+  const [accessoryStyles, setAccessoryStyles] = useState<Record<string, AccessoryStyle>>(userDoc.accessoryStyles ?? {});
+  // Migration: detect legacy styles where x/y were pixels and convert to percentages.
+  useEffect(() => {
+    const migrated: Record<string, AccessoryStyle> = {};
+    let needsMigration = false;
+    for (const [id, s] of Object.entries(userDoc.accessoryStyles ?? {})) {
+      const maybe = s as AccessoryStyle & { x: number; y: number };
+      if (Math.abs(maybe.x) > 50 || Math.abs(maybe.y) > 50) {
+        needsMigration = true;
+        const item = CLOTHING_ITEMS.find((it) => it.id === id);
+        const slot = item ? item.slot : ("head" as const);
+        const posCfg = LAYER_POS[slot] ?? LAYER_POS.head;
+        const baseSz = 72 * (posCfg.sizeFrac ?? 0.36);
+        const pxToPercent = (px: number) => (baseSz === 0 ? 0 : (px / baseSz) * 100);
+        migrated[id] = {
+          scale: maybe.scale ?? 1,
+          rotation: maybe.rotation ?? 0,
+          x: pxToPercent(maybe.x),
+          y: pxToPercent(maybe.y),
+        };
+      }
+    }
+    if (needsMigration) {
+      const next = { ...(userDoc.accessoryStyles ?? {}), ...migrated };
+      setAccessoryStyles(next);
+      void onUpdateAccessoryStyles(next);
+    }
+  }, [userDoc.accessoryStyles, userDoc.inventory, onUpdateAccessoryStyles]);
   const canAffordVIP = userDoc.saldo >= VIP_COST;
   const equipped = getEquipped(userDoc.inventory);
+  const selectedItem = activeAccessoryId ? CLOTHING_ITEMS.find((item) => item.id === activeAccessoryId) ?? null : null;
+  const selectedItemOwned = Boolean(selectedItem && userDoc.inventory.includes(selectedItem.id));
+  const selectedStyle = activeAccessoryId ? accessoryStyles[activeAccessoryId] ?? DEFAULT_ACCESSORY_STYLE : DEFAULT_ACCESSORY_STYLE;
 
   const SLOT_LABELS: Record<string, string> = {
     head: "Cabeza",
@@ -820,13 +944,40 @@ function StoreScreen({
     back: "Espalda",
   };
 
+  useEffect(() => {
+    setAccessoryStyles(userDoc.accessoryStyles ?? {});
+  }, [userDoc.accessoryStyles]);
+
+  const updateAccessoryStyle = (field: keyof AccessoryStyle, value: number) => {
+    if (!activeAccessoryId) return;
+    const nextStyles = {
+      ...accessoryStyles,
+      [activeAccessoryId]: {
+        ...(accessoryStyles[activeAccessoryId] ?? DEFAULT_ACCESSORY_STYLE),
+        [field]: value,
+      },
+    };
+    setAccessoryStyles(nextStyles);
+    void onUpdateAccessoryStyles(nextStyles);
+  };
+
+  const resetAccessoryStyle = () => {
+    if (!activeAccessoryId) return;
+    const nextStyles = {
+      ...accessoryStyles,
+      [activeAccessoryId]: DEFAULT_ACCESSORY_STYLE,
+    };
+    setAccessoryStyles(nextStyles);
+    void onUpdateAccessoryStyles(nextStyles);
+  };
+
   return (
     <div className="screen-bg min-h-screen p-4 pb-12">
       <div className="max-w-xl mx-auto space-y-4 pt-6">
 
         {/* Header */}
         <div className="glass-card rounded-3xl p-5 animate-fade-in-up flex items-center gap-4">
-          <AvatarDisplay avatarType={userDoc.avatarType} inventory={userDoc.inventory} size="md" />
+          <AvatarDisplay avatarType={userDoc.avatarType} inventory={userDoc.inventory} size="md" accessoryStyles={accessoryStyles} guideAccessoryId={activeAccessoryId} />
           <div className="flex-1 min-w-0">
             <p className="text-xs font-semibold text-purple-500 uppercase tracking-wider">Tu Tienda</p>
             <h2 className="text-xl font-extrabold text-gray-900">🛍️ Personalización</h2>
@@ -867,7 +1018,7 @@ function StoreScreen({
             <div className="glass-card rounded-3xl p-5 text-center">
               <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Tu personaje actual</p>
               <div className="flex justify-center mb-3">
-                <AvatarDisplay avatarType={userDoc.avatarType} inventory={userDoc.inventory} size="lg" />
+                <AvatarDisplay avatarType={userDoc.avatarType} inventory={userDoc.inventory} size="lg" accessoryStyles={accessoryStyles} guideAccessoryId={activeAccessoryId} />
               </div>
               {Object.keys(equipped).length === 0 && (
                 <p className="text-xs text-gray-400">Aún no tienes ropa. ¡Ahorra y equípate!</p>
@@ -883,8 +1034,88 @@ function StoreScreen({
               )}
             </div>
 
+            {selectedItem && selectedItemOwned && (
+              <div className="glass-card rounded-2xl p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Personalización</p>
+                    <p className="text-sm font-semibold text-gray-800">{selectedItem.name}</p>
+                  </div>
+                  <button
+                    className="text-xs font-semibold text-indigo-600 hover:text-indigo-700"
+                    onClick={resetAccessoryStyle}
+                  >
+                    Reiniciar
+                  </button>
+                </div>
+                <p className="text-xs text-gray-400 mt-1">Sube tus PNG transparentes en la carpeta public/accessories y usa el mismo nombre que el accesorio (por ejemplo: gorra-sport.png).</p>
+                <div className="mt-3 space-y-3">
+                  <label className="block">
+                    <div className="flex justify-between text-xs font-semibold text-gray-600 mb-1">
+                      <span>Tamaño</span>
+                      <span>{selectedStyle.scale.toFixed(2)}x</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.8"
+                      max="1.8"
+                      step="0.05"
+                      value={selectedStyle.scale}
+                      onChange={(e) => updateAccessoryStyle("scale", Number(e.target.value))}
+                      className="w-full accent-indigo-500"
+                    />
+                  </label>
+                  <label className="block">
+                    <div className="flex justify-between text-xs font-semibold text-gray-600 mb-1">
+                      <span>Ángulo</span>
+                      <span>{selectedStyle.rotation}°</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="-45"
+                      max="45"
+                      step="1"
+                      value={selectedStyle.rotation}
+                      onChange={(e) => updateAccessoryStyle("rotation", Number(e.target.value))}
+                      className="w-full accent-indigo-500"
+                    />
+                  </label>
+                  <label className="block">
+                    <div className="flex justify-between text-xs font-semibold text-gray-600 mb-1">
+                      <span>Posición X</span>
+                          <span>{selectedStyle.x}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="-50"
+                      max="50"
+                      step="1"
+                      value={selectedStyle.x}
+                      onChange={(e) => updateAccessoryStyle("x", Number(e.target.value))}
+                      className="w-full accent-indigo-500"
+                    />
+                  </label>
+                  <label className="block">
+                    <div className="flex justify-between text-xs font-semibold text-gray-600 mb-1">
+                      <span>Posición Y</span>
+                      <span>{selectedStyle.y}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="-50"
+                      max="50"
+                      step="1"
+                      value={selectedStyle.y}
+                      onChange={(e) => updateAccessoryStyle("y", Number(e.target.value))}
+                      className="w-full accent-indigo-500"
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
+
             {/* Lista de ropa por slot */}
-            {(["head", "face", "body", "back"] as const).map((slot) => {
+            {(["head", "face"] as const).map((slot) => {
               const slotItems = CLOTHING_ITEMS.filter((i) => i.slot === slot);
               return (
                 <div key={slot} className="glass-card rounded-2xl p-4">
@@ -913,9 +1144,17 @@ function StoreScreen({
                           </div>
                           <div className="text-right">
                             {owned ? (
-                              <span className="px-2 py-1 rounded-lg text-xs font-bold bg-green-50 text-green-600 border border-green-100">
-                                {isEquipped ? "✅ Equipado" : "✓ Tienes"}
-                              </span>
+                              <div className="flex flex-col items-end gap-1">
+                                <span className="px-2 py-1 rounded-lg text-xs font-bold bg-green-50 text-green-600 border border-green-100">
+                                  {isEquipped ? "✅ Equipado" : "✓ Tienes"}
+                                </span>
+                                <button
+                                  className="px-2 py-1 rounded-lg text-xs font-semibold bg-white border border-indigo-200 text-indigo-600 hover:bg-indigo-50"
+                                  onClick={() => setActiveAccessoryId(item.id)}
+                                >
+                                  {activeAccessoryId === item.id ? "✏️ Ajustando" : "🛠️ Ajustar"}
+                                </button>
+                              </div>
                             ) : (
                               <button
                                 className="px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50 transition-all"
@@ -1118,6 +1357,7 @@ function GameScreen({
               avatarType={userDoc.avatarType}
               inventory={userDoc.inventory}
               size="sm"
+              accessoryStyles={userDoc.accessoryStyles}
             />
           </div>
 
@@ -1352,6 +1592,7 @@ export default function App() {
         isVIP: raw.isVIP ?? false,
         inventory: raw.inventory ?? [],
         avatarType: raw.avatarType ?? "hombre",
+        accessoryStyles: (raw.accessoryStyles as Record<string, AccessoryStyle> | undefined) ?? {},
       };
       setUserDoc(data);
       setIsVIP(data.isVIP);
@@ -1420,6 +1661,7 @@ export default function App() {
         isVIP: false,
         inventory: [],
         avatarType,
+        accessoryStyles: {},
       };
       await setDoc(doc(db!, "usuarios", firebaseUser.uid), {
         ...newDoc,
@@ -1535,6 +1777,16 @@ export default function App() {
     }
   };
 
+  const handleUpdateAccessoryStyles = async (styles: Record<string, AccessoryStyle>) => {
+    if (!firebaseUser || !userDoc) return;
+    try {
+      await updateDoc(doc(db!, "usuarios", firebaseUser.uid), { accessoryStyles: styles });
+      setUserDoc((prev) => prev ? { ...prev, accessoryStyles: styles } : prev);
+    } catch (e) {
+      console.error("Error guardando personalización:", e);
+    }
+  };
+
   // ── Cerrar sesión ────────────────────────────────────────────────────────
   const handleSignOut = async () => {
     try { await signOut(auth!); } catch { /* ignore */ }
@@ -1587,6 +1839,7 @@ export default function App() {
         onBack={() => setScreen("game")}
         buying={buyingVIP}
         buyingItem={buyingItem}
+        onUpdateAccessoryStyles={handleUpdateAccessoryStyles}
       />
     );
 
